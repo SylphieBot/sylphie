@@ -1,0 +1,24 @@
+[package]
+name = "sylphie_core"
+version = "0.1.0"
+authors = ["Lymia Aluysia <lymia@lymiahugs.com>"]
+edition = "2018"
+
+[dependencies]
+enumset = "1.0.0"
+failure = "0.1.5"
+fs2 = "0.4.3"
+futures = "0.3.0"
+lazy_static = "1.4.0"
+linefeed = "0.6.0"
+minnie = { version = "0.1.0", path = "../../minnie" }
+parking_lot = "0.10.0"
+r2d2 = "0.8.5"
+rusqlite = "0.21.0"
+static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
+tracing = { version = "0.1.10", features = ["log"] }
+tracing-futures = "0.2.0"
+tracing-log = "0.1.1"
+tracing-subscriber = "0.2.0"
+
+sylphie_derive = { version = "0.1.0", path = "../sylphie_derive" }
