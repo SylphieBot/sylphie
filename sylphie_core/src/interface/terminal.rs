@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::*;
 
-pub struct TerminalCommandEvent(String);
+pub struct TerminalCommandEvent(pub String);
 simple_event!(TerminalCommandEvent);
 
 pub struct TerminalLock<'a, 'b>(Writer<'a, 'b, DefaultTerminal>);
@@ -28,13 +28,21 @@ impl Terminal {
     pub(in super) fn new(shared: Arc<InterfaceShared>) -> Result<Terminal> {
         let internal_name = shared.info.bot_name.to_lowercase().replace(' ', "-");
         let interface = LinefeedInterface::new(internal_name.clone())?;
+        interface.set_report_signal(Signal::Interrupt, true);
         interface.set_report_signal(Signal::Quit, true);
         interface.set_history_size(100);
         interface.set_prompt(&format!("{}> ", internal_name))?;
         Ok(Terminal(Arc::new(TerminalInfo { shared, interface })))
     }
+    fn shutdown_msg(&self) -> Result<()> {
+        write!(
+            self.0.interface,
+            "Please use the '.shutdown' command to forcefully stop {}.\n",
+            self.0.shared.info.bot_name,
+        )?;
+        Ok(())
+    }
     pub fn start_terminal(&self, target: &Handler<impl Events>) -> Result<()> {
-        let mut last_line = String::new();
         let mut last_failed = false;
         'outer: loop {
             let result = self.0.interface.read_line_step(Some(Duration::from_millis(100)));
@@ -46,12 +54,14 @@ impl Terminal {
                     // TODO: Error reporting.
                     target.dispatch(TerminalCommandEvent(line));
                 }
-                Ok(Some(ReadResult::Eof)) =>
-                    write!(
-                        self.0.interface,
-                        "^D\nPlease use the 'shutdown' command to stop {}.",
-                        self.0.shared.info.bot_name,
-                    )?,
+                Ok(Some(ReadResult::Eof)) => {
+                    self.shutdown_msg()?;
+                }
+                Ok(Some(ReadResult::Signal(Signal::Interrupt))) => {
+                    eprint!("^C\n");
+                    self.shutdown_msg()?;
+                    self.0.interface.set_buffer("")?;
+                }
                 Ok(Some(ReadResult::Signal(Signal::Quit))) => {
                     write!(self.0.interface, " (killed)\n")?;
                     break 'outer;

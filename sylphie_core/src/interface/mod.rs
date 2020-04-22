@@ -2,6 +2,7 @@
 
 use crate::errors::*;
 use crate::module::CrateMetadata;
+use static_events::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +40,12 @@ impl Interface {
         Ok(Interface(Arc::new(InterfaceData {
             shared, terminal,
         })))
+    }
+
+    pub fn start(&self, target: &Handler<impl Events>) -> Result<()> {
+        let _logger = logger::activate(self.0.shared.clone(), self.0.terminal.clone())?;
+        self.0.terminal.start_terminal(target)?;
+        Ok(())
     }
 
     pub fn shutdown(&self) {

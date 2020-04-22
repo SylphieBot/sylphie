@@ -1,4 +1,5 @@
 use crate::errors::*;
+use crate::interface::*;
 use crate::module::{Module, ModuleManager};
 use fs2::*;
 use static_events::*;
@@ -36,13 +37,24 @@ fn get_root_path() -> PathBuf {
 pub struct SylphieEvents<R: Module> {
     #[subhandler] root_module: R,
     #[service] module_manager: ModuleManager,
+    #[service] interface: Interface,
 }
 
+#[events_impl]
 impl <R: Module> SylphieEvents<R> {
-    fn new(core: SylphieCore<R>) -> SylphieEvents<R> {
-        let (module_manager, root_module) = ModuleManager::init(core);
-        SylphieEvents {
-            root_module, module_manager,
+    #[event_handler]
+    fn inherent_commands(&self, command: &TerminalCommandEvent) {
+        match command.0.as_str().trim() {
+            ".help" => {
+                info!("Internal commands:");
+                info!(" .help - Shows this help message");
+                info!(" .shutdown - Forcefully shuts down the bot");
+            }
+            ".shutdown" => {
+                info!("(shutdown)");
+                ::std::process::abort()
+            }
+            _ => { }
         }
     }
 }
@@ -65,17 +77,32 @@ impl <R: Module> SylphieCore<R> {
         }))
     }
 
-    pub fn start(&self) {
+    /// Starts the bot core, blocking the main thread until the bot returns.
+    pub fn start(&self) -> Result<()> {
         if !self.0.is_started.compare_and_swap(false, true, Ordering::Relaxed) {
-            self.0.events.activate_handle(SylphieEvents::new(self.clone()));
-            eprintln!("{:#?}", self.0.events.lock().unwrap().get_service::<ModuleManager>());
+            let (module_manager, root_module) = ModuleManager::init(self.clone());
+            let loaded_crates = module_manager.modules_list();
+            let interface_info = InterfaceInfo {
+                bot_name: self.0.bot_name.clone(),
+                root_path: self.0.root_path.clone(),
+                loaded_crates,
+            };
+            let interface = Interface::new(interface_info)?;
+
+            self.0.events.activate_handle(SylphieEvents {
+                root_module,
+                module_manager,
+                interface: interface.clone(),
+            });
+
+            interface.start(&self.0.events.lock())
         } else {
             panic!("SylphieCore has already been started.")
         }
     }
 
     pub fn get_handler(&self) -> Option<Handler<SylphieEvents<R>>> {
-        self.0.events.lock()
+        self.0.events.try_lock()
     }
 
     // TODO: Shutdown

@@ -130,7 +130,6 @@ pub struct ModuleManager {
     module_id_root: u32,
     module_info: Vec<ModuleInfo>,
     name_to_id: HashMap<String, ModuleId>,
-
     source_crates: Vec<CrateMetadata>,
 }
 impl ModuleManager {
@@ -160,6 +159,9 @@ impl ModuleManager {
         walker.init_module("", metadata, root.info_mut());
         manager.compute_source_crates();
         (manager, root)
+    }
+    pub(crate) fn modules_list(&self) -> Vec<CrateMetadata> {
+        self.source_crates.clone()
     }
 
     /// Returns the metadata for a given module.
