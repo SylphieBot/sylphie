@@ -1,16 +1,18 @@
+use chrono::Local;
 use crate::errors::*;
 use crate::interface::InterfaceShared;
 use crate::interface::terminal::Terminal;
-use lazy_static::*;
 use parking_lot::Mutex;
+use std::fmt::{Result as FmtResult, Write};
 use std::sync::{Arc, Once};
 use tracing::*;
 use tracing::span::{Attributes, Record};
-use tracing::subscriber::{set_default, DefaultGuard};
+use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 use tracing_subscriber::fmt::format::{DefaultFields, Format, Full};
+use tracing_subscriber::fmt::time::FormatTime;
 
-type EnvSubscriber = FmtSubscriber<DefaultFields, Format<Full>, EnvFilter>;
+type EnvSubscriber = FmtSubscriber<DefaultFields, Format<Full, ShortFormatTime>, EnvFilter>;
 
 struct LockingSubscriber {
     terminal: Arc<Terminal>,
@@ -41,8 +43,15 @@ impl Subscriber for LockingSubscriber {
     }
 }
 
+pub struct ShortFormatTime;
+impl FormatTime for ShortFormatTime {
+    fn format_time(&self, w: &mut dyn Write) -> FmtResult {
+        write!(w, "{}", Local::now().format("[%k:%M:%S]"))
+    }
+}
+
 pub struct Logger {
-    guard: Mutex<Option<DefaultGuard>>,
+    _guard: Mutex<Option<DefaultGuard>>,
 }
 
 fn activate_log_compat() {
@@ -60,17 +69,19 @@ pub(in super) fn activate(
 
     activate_log_compat();
 
+    let env_filter = tracing_subscriber::EnvFilter::from_default_env();
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_timer(ShortFormatTime)
+        .with_env_filter(env_filter)
         .finish();
     let subscriber = LockingSubscriber {
         terminal: terminal.clone(),
-        underlying: subscriber
+        underlying: subscriber,
     };
     let guard = tracing::subscriber::set_default(subscriber);
 
     std::fs::create_dir_all(&shared.info.root_path)?;
 
-    Ok(Logger { guard: Mutex::new(Some(guard)) })
+    Ok(Logger { _guard: Mutex::new(Some(guard)) })
 }
 

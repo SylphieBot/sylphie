@@ -253,6 +253,11 @@ mod private {
             Error::new(ErrorKind::GenericFail(Box::new(self)))
         }
     }
+    impl ToError for ErrorAsFail {
+        fn into_sylphie_error(self) -> Error {
+            self.0
+        }
+    }
     impl ToError for MinnieError {
         fn into_sylphie_error(self) -> Error {
             Error::new(ErrorKind::MinnieError(self))

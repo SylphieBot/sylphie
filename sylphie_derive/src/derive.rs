@@ -12,18 +12,51 @@ use quote::*;
 struct FieldAttrs {
     is_module_info: bool,
     is_submodule: bool,
+    is_core_ref: bool,
+    init_with: Option<Expr>,
 }
 impl FieldAttrs {
-    fn from_attrs(attrs: &[Attribute]) -> FieldAttrs {
+    fn from_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
         let mut tp = FieldAttrs::default();
+        let mut exclusive_count = 0;
+        let mut attr_span = None;
         for attr in attrs {
+            let mut set_span = true;
             match last_path_segment(&attr.path).as_str() {
-                "module_info" => tp.is_module_info = true,
-                "submodule" => tp.is_submodule = true,
-                _ => { }
+                "module_info" if !tp.is_module_info => {
+                    tp.is_module_info = true;
+                    exclusive_count += 1;
+                },
+                "submodule" if !tp.is_submodule => {
+                    tp.is_submodule = true;
+                    exclusive_count += 1;
+                },
+                "core_ref" if !tp.is_core_ref => {
+                    tp.is_core_ref = true;
+                    exclusive_count += 1;
+                },
+                "init_with" => {
+                    if tp.init_with.is_some() {
+                        error(attr.span(), "Only one #[init_with] attribute can be used.")?;
+                    }
+                    let expr = attr.parse_args::<Expr>()?;
+                    tp.init_with = Some(expr);
+                    exclusive_count += 1;
+                }
+                _ => set_span = false,
+            }
+            if set_span {
+                attr_span = Some(attr.span());
             }
         }
-        tp
+        if exclusive_count > 1 {
+            error(
+                attr_span.unwrap(),
+                "Only one of #[init_with], #[module_info], #[submodule], or #[core_ref] may be \
+                 used on one field.",
+            )?;
+        }
+        Ok(tp)
     }
 }
 
@@ -34,6 +67,8 @@ struct ModuleAttrs {
     integral: bool,
     #[darling(default)]
     integral_recursive: bool,
+    #[darling(default)]
+    anonymous: bool,
 }
 
 fn git_metadata() -> std::result::Result<SynTokenStream, GitError> {
@@ -66,6 +101,9 @@ fn module_metadata(attrs: &ModuleAttrs) -> SynTokenStream {
     }
     if attrs.integral_recursive {
         flags.extend(quote! { | ::sylphie_core::module::ModuleFlag::IntegralRecursive });
+    }
+    if attrs.anonymous {
+        flags.extend(quote! { | ::sylphie_core::module::ModuleFlag::Anonymous });
     }
     let git_info = match git_metadata() {
         Ok(v) => quote! { ::sylphie_core::__macro_export::Some(#v) },
@@ -104,7 +142,7 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
     let mut fields = Vec::new();
     let mut info_field = None;
     for field in &mut data.fields {
-        let attrs = FieldAttrs::from_attrs(&field.attrs);
+        let attrs = FieldAttrs::from_attrs(&field.attrs)?;
 
         if attrs.is_module_info {
             if info_field.is_some() {
@@ -114,7 +152,9 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
         }
 
         field_names.push(field.ident.clone().unwrap());
-        if attrs.is_submodule {
+        if let Some(init_with) = attrs.init_with {
+            fields.push(quote! { #init_with });
+        } else if attrs.is_submodule {
             // Push a `#[submodule]` attribute to pass to static-events
             field.attrs.push(Attribute {
                 pound_token: Default::default(),
@@ -125,7 +165,11 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
             });
 
             let name = &field.ident;
-            fields.push(quote! { _walker.register_module(_parent, stringify!(#name)) });
+            fields.push(quote! {
+                __mod_walker.register_module(__mod_core, __mod_parent, stringify!(#name))
+            });
+        } else if attrs.is_core_ref {
+            fields.push(quote! { ::sylphie_core::__macro_priv::cast_sylphie_core(__mod_core) });
         } else {
             fields.push(quote! { ::sylphie_core::__macro_export::Default::default() });
         }
@@ -149,7 +193,9 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
             }
 
             fn init_module<R: ::sylphie_core::module::Module>(
-                _parent: &str, _walker: &mut ::sylphie_core::module::ModuleTreeWalker<R>,
+                __mod_core: ::sylphie_core::core::SylphieCore<R>,
+                __mod_parent: &str,
+                __mod_walker: &mut ::sylphie_core::module::ModuleTreeWalker,
             ) -> Self {
                 #ident {
                     #(#field_names: #fields,)*

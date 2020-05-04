@@ -1,17 +1,11 @@
 use crate::errors::*;
 use crate::interface::InterfaceShared;
-use enumset::*;
 use linefeed::{
     Interface as LinefeedInterface, DefaultTerminal, Signal, ReadResult, Writer,
 };
-use linefeed::terminal::*;
 use static_events::*;
-use std::cmp::min;
-use std::io;
-use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::thread;
 use std::time::*;
 
 pub struct TerminalCommandEvent(pub String);
@@ -37,7 +31,7 @@ impl Terminal {
     fn shutdown_msg(&self) -> Result<()> {
         write!(
             self.0.interface,
-            "Please use the '.shutdown' command to forcefully stop {}.\n",
+            "Please use the '.shutdown' command to stop {}.\n",
             self.0.shared.info.bot_name,
         )?;
         Ok(())
@@ -50,7 +44,9 @@ impl Terminal {
                 last_failed = false;
             }
             match result {
-                Ok(Some(ReadResult::Input(line))) => {
+                Ok(Some(ReadResult::Input(line))) => if !line.trim().is_empty() {
+                    self.0.interface.add_history_unique(line.clone());
+
                     // TODO: Error reporting.
                     target.dispatch(TerminalCommandEvent(line));
                 }

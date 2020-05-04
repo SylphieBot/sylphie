@@ -51,6 +51,8 @@ pub enum ModuleFlag {
     Integral,
     /// A module that is integral, and whose children are all integral.
     IntegralRecursive,
+    /// A module that is only used internally, and should not be shown in any UI.
+    Anonymous,
 }
 
 #[derive(Clone, Debug)]
@@ -81,11 +83,10 @@ impl ModuleInfo {
     }
 }
 
-pub struct ModuleTreeWalker<'a, R: Module> {
-    core: SylphieCore<R>,
+pub struct ModuleTreeWalker<'a> {
     manager: &'a mut ModuleManager,
 }
-impl <'a, R: Module> ModuleTreeWalker<'a, R> {
+impl <'a> ModuleTreeWalker<'a> {
     fn init_module(
         &mut self, name: &str, metadata: ModuleMetadata, info: &mut ModuleInfo,
     ) {
@@ -99,20 +100,18 @@ impl <'a, R: Module> ModuleTreeWalker<'a, R> {
         });
         self.manager.module_info.push(info.clone());
         self.manager.name_to_id.insert(name, id);
-
     }
-    pub fn register_module<M: Module>(&mut self, parent: &str, name: &str) -> M {
+    pub fn register_module<R: Module, M: Module>(
+        &mut self, core: SylphieCore<R>, parent: &str, name: &str,
+    ) -> M {
         assert_ne!(name, "__root__", "__root__ is a reserved module name.");
         assert!(!name.contains('.'), "Periods are not allowed in module names.");
         let submodule_name =
             if parent.is_empty() { name.to_string() } else { format!("{}.{}", parent, name) };
-        let mut module = M::init_module(&submodule_name, self);
+        let mut module = M::init_module(core, &submodule_name, self);
         let metadata = module.metadata();
         self.init_module(&submodule_name, metadata, module.info_mut());
         module
-    }
-    pub fn core(&self) -> SylphieCore<R> {
-        self.core.clone()
     }
 }
 
@@ -122,7 +121,9 @@ pub trait Module: Events + Sized + Send + Sync + 'static {
     fn info(&self) -> &ModuleInfo;
     fn info_mut(&mut self) -> &mut ModuleInfo;
 
-    fn init_module<R: Module>(parent: &str, walker: &mut ModuleTreeWalker<R>) -> Self;
+    fn init_module<R: Module>(
+        core: SylphieCore<R>, parent: &str, walker: &mut ModuleTreeWalker,
+    ) -> Self;
 }
 
 #[derive(Debug)]
@@ -151,10 +152,9 @@ impl ModuleManager {
             source_crates: Default::default(),
         };
         let mut walker = ModuleTreeWalker {
-            core,
             manager: &mut manager,
         };
-        let mut root = R::init_module("", &mut walker);
+        let mut root = R::init_module(core, "", &mut walker);
         let metadata = root.metadata();
         walker.init_module("", metadata, root.info_mut());
         manager.compute_source_crates();
