@@ -155,13 +155,13 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
         if let Some(init_with) = attrs.init_with {
             fields.push(quote! { #init_with });
         } else if attrs.is_submodule {
-            // Push a `#[submodule]` attribute to pass to static-events
+            // Push a `#[subhandler]` attribute to pass to static-events
             field.attrs.push(Attribute {
                 pound_token: Default::default(),
                 style: AttrStyle::Outer,
                 bracket_token: Default::default(),
                 path: parse2(quote!(subhandler))?,
-                tokens: Default::default()
+                tokens: Default::default(),
             });
 
             let name = &field.ident;
@@ -169,7 +169,7 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
                 __mod_walker.register_module(__mod_core, __mod_parent, stringify!(#name))
             });
         } else if attrs.is_core_ref {
-            fields.push(quote! { ::sylphie_core::__macro_priv::cast_sylphie_core(__mod_core) });
+            fields.push(quote! { ::sylphie_core::__macro_priv::cast_core_ref(__mod_core) });
         } else {
             fields.push(quote! { ::sylphie_core::__macro_export::Default::default() });
         }
@@ -193,7 +193,7 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
             }
 
             fn init_module<R: ::sylphie_core::module::Module>(
-                __mod_core: ::sylphie_core::core::SylphieCore<R>,
+                __mod_core: ::sylphie_core::core::CoreRef<R>,
                 __mod_parent: &str,
                 __mod_walker: &mut ::sylphie_core::module::ModuleTreeWalker,
             ) -> Self {

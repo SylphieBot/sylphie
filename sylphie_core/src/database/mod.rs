@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::time;
 use std::sync::Arc;
 
+// TODO: Write a wrapper around `rusqlite` to deal with its frequent major version changes.
+
 struct ConnectionManager {
     db_file: PathBuf,
     transient_db_file: PathBuf,

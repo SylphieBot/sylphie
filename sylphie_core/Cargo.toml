@@ -7,6 +7,7 @@ edition = "2018"
 [features]
 
 [dependencies]
+arc-swap = "0.4.6"
 chrono = "0.4.11"
 enumset = "1.0.0"
 failure = "0.1.5"
@@ -16,7 +17,7 @@ linefeed = "0.6.0"
 minnie = { version = "0.1.0", path = "../../minnie" }
 parking_lot = "0.10.0"
 r2d2 = "0.8.5"
-rusqlite = "0.22.0"
+rusqlite = "0.23.0"
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
 tracing = { version = "0.1.10", features = ["log"] }
 tracing-futures = "0.2.0"

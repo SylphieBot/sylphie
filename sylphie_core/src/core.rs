@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-// TODO: Introduce builder for SylphieCore.
+// TODO: Potentially introduce a global lock?
 
 fn check_lock(path: impl AsRef<Path>) -> Result<File> {
     let mut options = OpenOptions::new();
@@ -34,14 +34,27 @@ fn get_root_path() -> PathBuf {
     }
 }
 
+/// Dispatched when the bot is started, before user interface is initialized.
+#[derive(Copy, Clone, Debug)]
+pub struct InitEvent;
+simple_event!(InitEvent);
+
+/// Dispatched after shutdown is initialized, and after the user interface is killed.
+#[derive(Copy, Clone, Debug)]
+pub struct ShutdownEvent;
+simple_event!(ShutdownEvent);
+
+struct ShutdownStartedEvent;
+simple_event!(ShutdownStartedEvent);
+
 /// The [`Events`] implementation used for a particular [`SylphieCore`].
 #[derive(Events)]
 pub struct SylphieEvents<R: Module> {
     #[subhandler] root_module: R,
     #[service] module_manager: ModuleManager,
     #[service] interface: Interface,
-    #[service] core: SylphieCore<R>,
     #[service] database: Database,
+    #[service] core_ref: CoreRef<R>,
 }
 
 #[events_impl]
@@ -59,10 +72,7 @@ impl <R: Module> SylphieEvents<R> {
             ".info" => {
                 // TODO: Implement.
             }
-            ".shutdown" => {
-                info!("(shutdown)");
-                ::std::process::abort()
-            }
+            ".shutdown" => self.core_ref.lock().shutdown_bot(),
             ".abort!!" => {
                 eprintln!("(abort)");
                 ::std::process::abort()
@@ -76,102 +86,132 @@ impl <R: Module> SylphieEvents<R> {
             _ => { }
         }
     }
+
+    #[event_handler]
+    fn shutdown_handler(&self, _: &ShutdownStartedEvent) {
+        self.interface.shutdown();
+    }
 }
 
-struct CoreData<R: Module> {
-    is_started: AtomicBool,
+/// A handle that allows operations to be performed on the bot outside the events loop.
+#[derive(Clone)]
+pub struct CoreRef<R: Module>(EventsHandle<SylphieEvents<R>>);
+impl <R: Module> CoreRef<R> {
+    // Gets whether the bot has been shut down.
+    pub fn is_shutdown(&self) -> bool {
+        self.0.is_shutdown()
+    }
+
+    /// Gets the number of active handlers from this handle, or handles cloned from it.
+    pub fn lock_count(&self) -> usize {
+        self.0.lock_count()
+    }
+
+    /// Returns the underlying [`Handler`], or panics if the bot has already been shut down.
+    pub fn lock(&self) -> Handler<SylphieEvents<R>> {
+        self.0.lock()
+    }
+
+    /// Returns the underlying [`Handler`] wrapped in a [`Some`], or [`None`] if the bot has
+    /// already been shut down.
+    pub fn try_lock(&self) -> Option<Handler<SylphieEvents<R>>> {
+        self.0.try_lock()
+    }
+
+}
+
+pub struct SylphieCore<R: Module> {
     bot_name: String,
     root_path: PathBuf,
     events: EventsHandle<SylphieEvents<R>>,
-    lock: Mutex<Option<File>>,
 }
-
-pub struct SylphieCore<R: Module>(Arc<CoreData<R>>);
 impl <R: Module> SylphieCore<R> {
     pub fn new(bot_name: impl Into<String>) -> Self {
-        SylphieCore(Arc::new(CoreData {
-            is_started: AtomicBool::new(false),
+        SylphieCore {
             bot_name: bot_name.into(),
             root_path: get_root_path(),
             events: EventsHandle::new(),
-            lock: Mutex::new(None),
-        }))
+        }
     }
 
     fn db_root(&self) -> Result<PathBuf> {
-        let mut root_path = self.0.root_path.clone();
+        let mut root_path = self.root_path.clone();
         root_path.push("db");
         if !root_path.is_dir() {
             fs::create_dir_all(&root_path)?;
         }
         Ok(root_path)
     }
-    fn lock(&self) -> Result<()> {
-        let mut lock = self.0.lock.lock();
-        if lock.is_none() {
-            let mut lock_path = self.db_root()?;
-            lock_path.push(format!("{}.lock", &self.0.bot_name));
-            *lock = Some(check_lock(lock_path)?);
-        }
-        Ok(())
+    fn lock(&mut self) -> Result<File> {
+        let mut lock_path = self.db_root()?;
+        lock_path.push(format!("{}.lock", &self.bot_name));
+        check_lock(lock_path)
     }
     fn init_db(&self) -> Result<Database> {
         let root_path = self.db_root()?;
         let mut db_path = root_path.clone();
-        db_path.push(format!("{}.db", &self.0.bot_name));
+        db_path.push(format!("{}.db", &self.bot_name));
         let mut transient_path = root_path;
-        transient_path.push(format!("{}.transient.db", &self.0.bot_name));
+        transient_path.push(format!("{}.transient.db", &self.bot_name));
 
         Database::new(db_path, transient_path)
     }
 
     /// Starts the bot core, blocking the main thread until the bot returns.
-    pub fn start(&self) -> Result<()> {
-        if !self.0.is_started.compare_and_swap(false, true, Ordering::Relaxed) {
-            self.lock()?;
+    ///
+    /// This sets loggers with `tracing` and `log`. You will need your own log subscribers to
+    /// log messages before calling this function. In addition, this function will panic if you
+    /// have set a `log` logger before calling this function.
+    ///
+    /// TODO: Only one bot core may be active at a time?
+    pub fn start(mut self) -> Result<()> {
+        init_early_logging();
 
-            let (module_manager, root_module) = ModuleManager::init(self.clone());
-            let loaded_crates = module_manager.modules_list();
-            let interface_info = InterfaceInfo {
-                bot_name: self.0.bot_name.clone(),
-                root_path: self.0.root_path.clone(),
-                loaded_crates,
-            };
-            let interface = Interface::new(interface_info)
-                .internal_err(|| "Could not initialize user interface.")?;
+        let _lock = self.lock()?;
 
-            self.0.events.activate_handle(SylphieEvents {
-                root_module,
-                module_manager,
-                interface: interface.clone(),
-                core: self.clone(),
-                database: self.init_db().internal_err(|| "Could not initialize database.")?,
-            });
+        let (module_manager, root_module) = ModuleManager::init(CoreRef(self.events.clone()));
+        let loaded_crates = module_manager.modules_list();
+        let interface_info = InterfaceInfo {
+            bot_name: self.bot_name.clone(),
+            root_path: self.root_path.clone(),
+            loaded_crates,
+        };
+        let interface = Interface::new(interface_info)
+            .internal_err(|| "Could not initialize user interface.")?;
 
-            interface.start(&self.0.events.lock())
-        } else {
-            panic!("SylphieCore has already been started.")
-        }
-    }
+        self.events.activate_handle(SylphieEvents {
+            root_module,
+            module_manager,
+            interface: interface.clone(),
+            database: self.init_db().internal_err(|| "Could not initialize database.")?,
+            core_ref: CoreRef(self.events.clone()),
+        });
+        interface.start(&self.events.lock())?;
+        self.events.lock().dispatch(ShutdownEvent);
+        self.events.shutdown(); // TODO: shutdown with progress
 
-    pub fn get_handler(&self) -> Option<Handler<SylphieEvents<R>>> {
-        self.0.events.try_lock()
-    }
-
-    // TODO: Shutdown
-}
-impl <R: Module> Clone for SylphieCore<R> {
-    fn clone(&self) -> Self {
-        SylphieCore(self.0.clone())
+        Ok(())
     }
 }
 
-/// Contains convenience functions defined directly on `Handler<impl Events>`.
+pub struct SylphieHandlerExtCore<'a, E: Events>(&'a Handler<E>);
+
+/// Contains extension functions defined directly on `Handler<impl Events>`.
+///
+/// This is the main way to access a lot of core bot functionality. Most of the functions in this
+/// trait will panic if called on a handler that is not based on Sylphie.
 pub trait SylphieHandlerExt {
+    /// Shuts down the bot.
+    fn shutdown_bot(&self);
+
     /// Returns a connection to the database.
     fn connect_db(&self) -> Result<DatabaseConnection>;
 }
 impl <E: Events> SylphieHandlerExt for Handler<E> {
+    fn shutdown_bot(&self) {
+        self.dispatch(ShutdownStartedEvent);
+    }
+
     fn connect_db(&self) -> Result<DatabaseConnection> {
         self.get_service::<Database>().connect()
     }

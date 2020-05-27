@@ -1,4 +1,4 @@
-use crate::SylphieCore;
+use crate::core::CoreRef;
 use enumset::*;
 use static_events::*;
 use std::collections::{HashMap, HashSet};
@@ -102,7 +102,7 @@ impl <'a> ModuleTreeWalker<'a> {
         self.manager.name_to_id.insert(name, id);
     }
     pub fn register_module<R: Module, M: Module>(
-        &mut self, core: SylphieCore<R>, parent: &str, name: &str,
+        &mut self, core: CoreRef<R>, parent: &str, name: &str,
     ) -> M {
         assert_ne!(name, "__root__", "__root__ is a reserved module name.");
         assert!(!name.contains('.'), "Periods are not allowed in module names.");
@@ -122,7 +122,7 @@ pub trait Module: Events + Sized + Send + Sync + 'static {
     fn info_mut(&mut self) -> &mut ModuleInfo;
 
     fn init_module<R: Module>(
-        core: SylphieCore<R>, parent: &str, walker: &mut ModuleTreeWalker,
+        core: CoreRef<R>, parent: &str, walker: &mut ModuleTreeWalker,
     ) -> Self;
 }
 
@@ -143,7 +143,7 @@ impl ModuleManager {
         list.sort();
         self.source_crates = list;
     }
-    pub(crate) fn init<R: Module>(core: SylphieCore<R>) -> (ModuleManager, R) {
+    pub(crate) fn init<R: Module>(core: CoreRef<R>) -> (ModuleManager, R) {
         static MODULE_ID_ROOT: AtomicU32 = AtomicU32::new(0);
         let mut manager = ModuleManager {
             module_id_root: MODULE_ID_ROOT.fetch_add(1, Ordering::Relaxed),
