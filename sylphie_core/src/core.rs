@@ -3,15 +3,13 @@ use crate::errors::*;
 use crate::interface::*;
 use crate::module::{Module, ModuleManager};
 use fs2::*;
-use parking_lot::Mutex;
 use static_events::*;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-// TODO: Potentially introduce a global lock?
+static CORE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn check_lock(path: impl AsRef<Path>) -> Result<File> {
     let mut options = OpenOptions::new();
@@ -60,7 +58,9 @@ pub struct SylphieEvents<R: Module> {
 #[events_impl]
 impl <R: Module> SylphieEvents<R> {
     #[event_handler]
-    fn builtin_commands(&self, command: &TerminalCommandEvent) {
+    fn builtin_commands(
+        &self, target: &Handler<impl Events>, command: &TerminalCommandEvent,
+    ) -> EventResult {
         match command.0.as_str().trim() {
             ".help" => {
                 info!("Built-in commands:");
@@ -72,7 +72,7 @@ impl <R: Module> SylphieEvents<R> {
             ".info" => {
                 // TODO: Implement.
             }
-            ".shutdown" => self.core_ref.lock().shutdown_bot(),
+            ".shutdown" => target.shutdown_bot(),
             ".abort!!" => {
                 eprintln!("(abort)");
                 ::std::process::abort()
@@ -83,8 +83,14 @@ impl <R: Module> SylphieEvents<R> {
             x if x.starts_with('.') => {
                 info!("Unknown built-in command. Use '.help' for more information.");
             }
-            _ => { }
+            _ => return EvOk
         }
+        EvCancel
+    }
+
+    #[event_handler(EvAfterEvent)]
+    fn unknown_terminal_command(&self, _: &TerminalCommandEvent) {
+        error!("Unknown command.");
     }
 
     #[event_handler]
@@ -163,9 +169,19 @@ impl <R: Module> SylphieCore<R> {
     /// log messages before calling this function. In addition, this function will panic if you
     /// have set a `log` logger before calling this function.
     ///
-    /// TODO: Only one bot core may be active at a time?
+    /// This sets the panic hook to allow for better error reporting.
+    ///
+    /// # Panics
+    ///
+    /// Only one bot core may be started in the lifetime of a process. Any started after the
+    /// first will immediately panic.
     pub fn start(mut self) -> Result<()> {
-        init_early_logging();
+        if CORE_STARTED.swap(true, Ordering::SeqCst) {
+            // TODO: Eventually work on relaxing this restriction to "one at once."
+            panic!("Only one bot core may be started in the lifetime of a process.");
+        }
+
+        early_init();
 
         let _lock = self.lock()?;
 
@@ -215,4 +231,14 @@ impl <E: Events> SylphieHandlerExt for Handler<E> {
     fn connect_db(&self) -> Result<DatabaseConnection> {
         self.get_service::<Database>().connect()
     }
+}
+
+/// Initializes the compatibility layer between `log` and `tracing`, the fallback logger, and the
+/// panic hook allowing [`Error::catch_panic`] to work correctly.
+///
+/// This may be called multiple times without errors. However, it will set a logger to the
+/// `log` crate, and will panic if another has already been set.
+pub fn early_init() {
+    crate::interface::init_early_logging();
+    crate::errors::activate_panic_hook();
 }

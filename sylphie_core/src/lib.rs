@@ -1,4 +1,4 @@
-#![feature(specialization, type_alias_impl_trait, marker_trait_attr, trivial_bounds)]
+#![feature(specialization, type_alias_impl_trait, marker_trait_attr, trivial_bounds, const_if_match)] // TODO: Minimize
 #![deny(unused_must_use)]
 
 #[macro_use] extern crate tracing;

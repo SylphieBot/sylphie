@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+//mod error_report;
 mod logger;
 mod terminal;
 
@@ -17,7 +18,7 @@ pub use terminal::TerminalCommandEvent;
 pub(crate) struct InterfaceInfo {
     pub bot_name: String,
     pub root_path: PathBuf,
-    pub loaded_crates: Vec<CrateMetadata>,
+    pub loaded_crates: Arc<[CrateMetadata]>,
 }
 
 struct InterfaceShared {
@@ -29,6 +30,12 @@ struct InterfaceData {
     shared: Arc<InterfaceShared>,
     terminal: Arc<terminal::Terminal>,
     guard: Arc<Mutex<Option<logger::Logger>>>,
+}
+struct LoggerLockGuard<'a>(&'a InterfaceData);
+impl <'a> Drop for LoggerLockGuard<'a> {
+    fn drop(&mut self) {
+        *self.0.guard.lock() = None;
+    }
 }
 
 /// A handle to services related to logging, the user interface, and error reporting.
@@ -49,7 +56,12 @@ impl Interface {
     }
 
     pub(crate) fn start(&self, target: &Handler<impl Events>) -> Result<()> {
-        let _logger = logger::activate(target, self.0.shared.clone(), self.0.terminal.clone())?;
+        let _lock_guard = {
+            let mut lock = self.0.guard.lock();
+            let logger = logger::activate(target, self.0.shared.clone(), self.0.terminal.clone())?;
+            *lock = Some(logger);
+            LoggerLockGuard(&self.0)
+        };
         self.0.terminal.start_terminal(target)?;
         Ok(())
     }
@@ -68,11 +80,7 @@ impl Interface {
     }
 }
 
-/// Initializes the compatibility layer between `log` and `tracing`, and the fallback logger.
-///
-/// This may be called multiple times without errors. However, it will set a logger to the
-/// `log` crate, and will panic if another has already been set.
-pub fn init_early_logging() {
+pub(crate) fn init_early_logging() {
     logger::activate_log_compat();
     logger::activate_fallback();
 }

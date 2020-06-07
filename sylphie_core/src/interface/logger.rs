@@ -2,11 +2,11 @@ use chrono::Local;
 use crate::errors::*;
 use crate::interface::InterfaceShared;
 use crate::interface::terminal::Terminal;
-use parking_lot::{Mutex, const_mutex};
 use static_events::*;
 use std::fmt::{Result as FmtResult, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
+use std::sync::atomic::Ordering;
 use tracing::{*, Metadata, Event};
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::{DefaultGuard, Interest};
@@ -20,6 +20,7 @@ use tracing_subscriber::layer::{Context, Layered};
 type EnvSubscriber = FmtSubscriber<DefaultFields, Format<Full, ShortFormatTime>, EnvFilter>;
 
 struct LockingSubscriber {
+    shared: Arc<InterfaceShared>,
     terminal: Arc<Terminal>,
     underlying: EnvSubscriber,
 }
@@ -76,8 +77,6 @@ self_event!(SetupLoggerEvent);
 
 pub fn activate_fallback() {
     static ONCE: Once = Once::new();
-    static LOGGER_MUTEX: Mutex<Option<DefaultGuard>> = const_mutex(None);
-
     ONCE.call_once(|| {
         let env_filter = tracing_subscriber::EnvFilter::new("debug");
         let subscriber = tracing_subscriber::FmtSubscriber::builder()
@@ -85,7 +84,7 @@ pub fn activate_fallback() {
             .with_env_filter(env_filter)
             .finish();
         let guard = tracing::subscriber::set_default(subscriber);
-        *LOGGER_MUTEX.lock() = Some(guard);
+        std::mem::forget(guard); // we are never going to drop this either way.
     });
 }
 
@@ -101,7 +100,7 @@ fn log_path(shared: &InterfaceShared) -> Result<PathBuf> {
     Ok(log_path)
 }
 fn make_logger(
-    core: &Handler<impl Events>, shared: &InterfaceShared, terminal: &Arc<Terminal>,
+    core: &Handler<impl Events>, shared: &Arc<InterfaceShared>, terminal: &Arc<Terminal>,
 ) -> Result<LockingSubscriber> {
     let log_path = log_path(shared)?;
 
@@ -114,6 +113,7 @@ fn make_logger(
         .with_env_filter(ev.console)
         .finish();
     Ok(LockingSubscriber {
+        shared: shared.clone(),
         terminal: terminal.clone(),
         underlying: subscriber,
     })

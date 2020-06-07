@@ -2,6 +2,7 @@ use crate::core::CoreRef;
 use enumset::*;
 use static_events::*;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub use sylphie_derive::*;
@@ -131,7 +132,7 @@ pub struct ModuleManager {
     module_id_root: u32,
     module_info: Vec<ModuleInfo>,
     name_to_id: HashMap<String, ModuleId>,
-    source_crates: Vec<CrateMetadata>,
+    source_crates: Arc<[CrateMetadata]>,
 }
 impl ModuleManager {
     fn compute_source_crates(&mut self) {
@@ -141,7 +142,7 @@ impl ModuleManager {
         }
         let mut list: Vec<_> = set.into_iter().collect();
         list.sort();
-        self.source_crates = list;
+        self.source_crates = list.into();
     }
     pub(crate) fn init<R: Module>(core: CoreRef<R>) -> (ModuleManager, R) {
         static MODULE_ID_ROOT: AtomicU32 = AtomicU32::new(0);
@@ -149,7 +150,7 @@ impl ModuleManager {
             module_id_root: MODULE_ID_ROOT.fetch_add(1, Ordering::Relaxed),
             module_info: Default::default(),
             name_to_id: Default::default(),
-            source_crates: Default::default(),
+            source_crates: Vec::new().into(),
         };
         let mut walker = ModuleTreeWalker {
             manager: &mut manager,
@@ -160,7 +161,7 @@ impl ModuleManager {
         manager.compute_source_crates();
         (manager, root)
     }
-    pub(crate) fn modules_list(&self) -> Vec<CrateMetadata> {
+    pub(crate) fn modules_list(&self) -> Arc<[CrateMetadata]> {
         self.source_crates.clone()
     }
 

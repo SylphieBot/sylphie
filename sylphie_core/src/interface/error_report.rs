@@ -1,26 +1,28 @@
+//! Handles generating error reports and detecting deadlocks.
+
 use backtrace::Backtrace;
 use crate::errors::*;
+use crate::interface::InterfaceShared;
+use crate::module::*;
 use chrono::Utc;
 use failure::Fail;
-use logger;
 use parking_lot::RwLock;
 use parking_lot::deadlock::check_deadlock;
 use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fmt::{Write as FmtWrite};
+use std::fmt::{self, Write as FmtWrite};
 use std::fs;
 use std::fs::File;
 use std::io::{Write as IoWrite};
 use std::panic::*;
 use std::path::{Path, PathBuf};
 use std::process::abort;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-// TODO: Separate this out into its own crate -- too useful not to.
-
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum ReportType {
     Error, Panic, Deadlock,
 }
@@ -41,32 +43,79 @@ impl ReportType {
     }
 }
 
-fn make_error_report(kind: ReportType, cause: &str, backtrace: &str) -> Result<String> {
-    let mut buf = String::new();
-    writeln!(buf, "--- Sylph-Verifier {} Report ---", kind.name())?;
-    writeln!(buf)?;
-    writeln!(buf, "Version: {} {} ({}{}{})",
-                  env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), env!("TARGET"),
-                  if env!("TARGET") != env!("HOST") {
-                      format!(", cross-compiled from {}", env!("HOST"))
-                  } else { "".to_owned() },
-                  if env!("PROFILE") != "release" {
-                      format!(", {}", env!("PROFILE"))
-                  } else { "".to_owned() })?;
-    writeln!(buf, "Compiler: {}", env!("RUSTC_VERSION_STR"))?;
-    writeln!(buf, "Commit: {}{}",
-                  env!("GIT_COMMIT"),
-                  if option_env!("GIT_IS_DIRTY").is_some() { " (dirty)" } else { "" })?;
-    writeln!(buf)?;
-    writeln!(buf, "{}", cause.trim())?;
-    writeln!(buf)?;
-    writeln!(buf, "{}", backtrace.trim())?;
-    writeln!(buf)?;
-    writeln!(buf, "(recent logs)")?;
-    writeln!(buf, "{}", logger::format_recent_logs()?)?;
-    Ok(buf)
+struct ThreadName;
+impl fmt::Display for ThreadName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(thread::current().name().unwrap_or("<unknown>"))
+    }
 }
 
+#[derive(Clone)]
+pub struct ErrorCtx(Arc<InterfaceShared>);
+impl ErrorCtx {
+    pub(in super) fn new(shared: Arc<InterfaceShared>) -> Self {
+        ErrorCtx(shared)
+    }
+
+    fn fmt_header(&self, fmt: &mut fmt::Formatter<'_>, kind: ReportType) -> fmt::Result {
+        write!(fmt, "--- {} {} Report ---\n\n", &self.0.info.bot_name, kind.name())?;
+
+        // write loaded modules information
+        write!(fmt, "Loaded packages:\n")?;
+        for module in &*self.0.info.loaded_crates {
+            write!(fmt, "    {} {}", module.crate_path, module.crate_version)?;
+            if let Some(git_info) = &module.git_info {
+                write!(fmt, " ({}, r{}", git_info.name, if git_info.revision.len() > 8 {
+                    &git_info.revision[..8]
+                } else {
+                    git_info.revision
+                })?;
+                if git_info.modified_files > 0 {
+                    write!(fmt, ", {} dirty files", git_info.modified_files)?;
+                }
+                write!(fmt, ")")?;
+            }
+            writeln!(fmt)?;
+        }
+
+        // write platform information
+        write!(fmt, concat!("Platform: ", env!("TARGET")))?;
+        if env!("TARGET") != env!("HOST") {
+            write!(fmt, concat!(", cross-compiled from ", env!("HOST")))?;
+        }
+        if env!("PROFILE") != "release" {
+            write!(fmt, concat!(", ", env!("PROFILE")))?;
+        }
+        write!(fmt, concat!("\nCompiler: ", env!("RUSTC_VERSION_STR"), "\n"))?;
+
+        Ok(())
+    }
+    fn fmt_logs(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
+
+    pub fn fmt_error_report(&self, fmt: &mut fmt::Formatter<'_>, e: &dyn Fail) -> fmt::Result {
+        self.fmt_header(fmt, ReportType::Error)?;
+        write!(fmt, "\nThread '{}' encountered an error: {}\n", ThreadName, e)?;
+        for e in e.iter_causes() {
+            write!(fmt, "Caused by: {}\n", e)?;
+        }
+        match e.backtrace() {
+            Some(bt) => write!(fmt, "\n{}\n\n", bt)?,
+            None => write!(fmt, "\n(from catch site)\n{:?}\n\n", Backtrace::new())?,
+        }
+        self.fmt_logs(fmt)?;
+        Ok(())
+    }
+    pub fn fmt_panic_report(
+        &self, fmt: &mut fmt::Formatter<'_>,
+        info: &(dyn Any + Send), loc: Option<&Location>, backtrace: &Backtrace,
+    ) -> fmt::Result {
+        todo!()
+    }
+}
+
+/*
 fn write_report_file(root_path: impl AsRef<Path>, kind: &str, report: &str) -> Result<PathBuf> {
     let mut path = PathBuf::from(root_path.as_ref());
     path.push("logs");
@@ -147,9 +196,6 @@ fn check_report_deadlock() -> Result<bool> {
     }
 }
 
-fn thread_name() -> String {
-    thread::current().name().or(Some("<unknown>")).unwrap().to_string()
-}
 fn report_err(e: &impl Fail) -> Result<()> {
     let mut cause = String::new();
     writeln!(cause, "Thread {} errored with '{}'", thread_name(), e)?;
@@ -213,3 +259,4 @@ pub fn catch_error<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
         Err(_) => Err(ErrorKind::Panicked.into()),
     }
 }
+*/

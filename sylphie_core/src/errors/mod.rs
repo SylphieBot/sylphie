@@ -1,37 +1,49 @@
-use failure::*;
-use futures::FutureExt;
+use backtrace::Backtrace;
 use minnie::{Error as MinnieError};
-use std::any::Any;
 use std::borrow::Cow;
+use std::error::{Error as StdError};
 use std::fmt;
 use std::future::Future;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use thiserror::*;
 
 pub(crate) use std::result::{Result as StdResult};
 
+mod panic;
+pub use panic::PanicLocation;
+pub(crate) use panic::activate_panic_hook;
+
 /// The type of error contained within an [`Error`].
-#[derive(Fail, Debug)]
+#[derive(Error, Debug)]
 pub enum ErrorKind {
     /// An internal error occurred.
-    #[fail(display = "Internal error: {}", _0)]
+    #[error("Internal error: {0}")]
     InternalError(Cow<'static, str>),
     /// An panic occurred.
-    #[fail(display = "{}", _0)]
+    #[error("{0}")]
     Panicked(Cow<'static, str>),
-    #[fail(display = "Command error occurred: {}", _0)]
+    /// An error occurred in a command.
+    ///
+    /// These errors are meant to be reported to the user and are not internal errors.
+    #[error("Command error occurred: {0}")]
     CommandError(Cow<'static, str>),
 
-    #[fail(display = "Discord error occurred: {}", _0)]
+    /// An error occurred from Minnie.
+    #[error("Discord error occurred: {0}")]
     MinnieError(MinnieError),
 
-    #[fail(display = "{}", _0)]
-    GenericFail(Box<dyn Fail>),
+    /// A wrapped generic error.
+    #[error("{0}")]
+    GenericError(Box<dyn StdError + Send + 'static>),
+    /// An error that does implement [`Send`] and was converted to a string.
+    #[error("{0}")]
+    NonSendError(String),
 }
 
 struct ErrorData {
     kind: ErrorKind,
     backtrace: Option<Backtrace>,
-    cause: Option<Box<dyn Fail>>,
+    panic_loc: Option<PanicLocation>,
+    cause: Option<Box<dyn StdError + Send + 'static>>,
 }
 
 /// The type of error used throughout Sylphie. It allows wrapping arbitrary error types as it is
@@ -45,7 +57,7 @@ impl Error {
     #[inline(never)] #[cold]
     pub fn new(kind: ErrorKind) -> Self {
         Error(Box::new(ErrorData {
-            kind, backtrace: None, cause: None
+            kind, backtrace: None, panic_loc: None, cause: None,
         }))
     }
 
@@ -55,7 +67,7 @@ impl Error {
     /// and and cause information is directly inlined into this error, instead of through a
     /// wrapper.
     #[inline(never)] #[cold]
-    pub fn new_with_cause(kind: ErrorKind, cause: impl Fail) -> Self {
+    pub fn new_with_cause(kind: ErrorKind, cause: impl StdError + Send + 'static) -> Self {
         Error::new(kind).with_cause(cause)
     }
 
@@ -80,36 +92,32 @@ impl Error {
     /// and and cause information is directly inlined into this error, instead of through a
     /// wrapper.
     #[inline(never)] #[cold]
-    pub fn with_cause(mut self, cause: impl Fail) -> Self {
+    pub fn with_cause(mut self, cause: impl StdError + Send + 'static) -> Self {
         private::BoxFail::set_cause(cause, &mut self);
         self
     }
 
     #[inline(never)] #[cold]
-    fn wrap_panic(panic: Box<dyn Any + Send + 'static>) -> Error {
-        let panic: Cow<'static, str> = if let Some(s) = panic.downcast_ref::<&'static str>() {
-            (*s).into()
-        } else if let Some(s) = panic.downcast_ref::<String>() {
-            s.clone().into()
-        } else {
-            "<non-string panic info>".into()
-        };
-        Error::new(ErrorKind::Panicked(panic))
+    fn wrap_panic(panic: panic::PanicInfo) -> Error {
+        let mut err = Error::new(ErrorKind::Panicked(panic.payload));
+        err.0.backtrace = Some(panic.backtrace);
+        err.0.panic_loc = panic.panic_loc;
+        err
     }
 
     /// Catches panics that occur in a closure, wrapping them in an [`Error`].
     #[inline]
     pub fn catch_panic<T>(func: impl FnOnce() -> Result<T>) -> Result<T> {
-        match catch_unwind(AssertUnwindSafe(func)) {
+        match panic::catch_unwind(func) {
             Ok(r) => r,
-            Err(e) => Err(Error::wrap_panic(e)),
+            Err(panic) => Err(Error::wrap_panic(panic)),
         }
     }
 
     /// Catches panics that occur in a future, wrapping then in an [`Error`].
     #[inline]
     pub async fn catch_panic_async<T>(fut: impl Future<Output = Result<T>>) -> Result<T> {
-        match AssertUnwindSafe(fut).catch_unwind().await {
+        match panic::CatchUnwind(fut).await {
             Ok(v) => v,
             Err(panic) => Err(Error::wrap_panic(panic)),
         }
@@ -120,46 +128,37 @@ impl Error {
         &self.0.kind
     }
 
-    /// Finds the first backtrace in the cause chain.
-    pub fn find_backtrace(&self) -> Option<&Backtrace> {
+    /// Returns the backtrace associated with this error.
+    pub fn backtrace(&self) -> Option<&Backtrace> {
         if let Some(x) = &self.0.backtrace {
             Some(x)
+        } else if let ErrorKind::MinnieError(e) = &self.0.kind {
+            e.backtrace()
         } else {
-            let mut current: Option<&dyn Fail> = self.cause();
-            while let Some(x) = current {
-                if let Some(bt) = x.backtrace() {
-                    return Some(bt)
-                }
-                current = x.cause();
-            }
             None
         }
     }
 
-    /// Gets the cause for this error.
-    pub fn cause(&self) -> Option<&dyn Fail> {
+    /// Gets the source of this error.
+    pub fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match &self.0.kind {
-            ErrorKind::MinnieError(e) => e.cause(),
-            ErrorKind::GenericFail(f) => f.cause(),
-            _ => match self.0.kind.cause() {
-                Some(x) => Some(x),
-                None => self.0.cause.as_ref().map(|x| &**x),
-            }
+            ErrorKind::MinnieError(e) => e.source(),
+            ErrorKind::GenericError(f) => f.source(),
+            _ => match &self.0.cause {
+                Some(x) => Some(&**x),
+                _ => None,
+            },
         }
     }
 
-    /// Gets the backtrace for this
-    pub fn backtrace(&self) -> Option<&Backtrace> {
-        match &self.0.kind {
-            ErrorKind::MinnieError(e) => e.backtrace(),
-            ErrorKind::GenericFail(f) => f.backtrace(),
-            _ => self.0.backtrace.as_ref(),
-        }
+    /// Returns the location of a panic, if this is one.
+    pub fn panic_loc(&self) -> Option<&PanicLocation> {
+        self.0.panic_loc.as_ref()
     }
 
-    /// Converts this error into a [`Fail`].
-    pub fn into_fail(self) -> ErrorAsFail {
-        self.into()
+    /// Converts this into a [`std::error::Error`].
+    pub fn into_std_error(self) -> ErrorWrapper {
+        ErrorWrapper(self)
     }
 }
 impl fmt::Debug for Error {
@@ -176,35 +175,29 @@ impl fmt::Display for Error {
     }
 }
 
-/// An [`Error`] wrapped in a [`Fail`]
-pub struct ErrorAsFail(Error);
-impl ErrorAsFail {
+/// An [`Error`] wrapped in a [`std::error::Error`]
+pub struct ErrorWrapper(Error);
+impl ErrorWrapper {
     pub fn into_inner(self) -> Error {
         self.0
     }
 }
-impl Fail for ErrorAsFail {
-    fn name(&self) -> Option<&str> {
-        Some("sylphie::errors::ErrorAsFail")
-    }
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.0.cause()
-    }
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.0.backtrace()
+impl StdError for ErrorWrapper {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.0.source()
     }
 }
-impl From<Error> for ErrorAsFail {
+impl From<Error> for ErrorWrapper {
     fn from(e: Error) -> Self {
-        ErrorAsFail(e)
+        ErrorWrapper(e)
     }
 }
-impl fmt::Debug for ErrorAsFail {
+impl fmt::Debug for ErrorWrapper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
     }
 }
-impl fmt::Display for ErrorAsFail {
+impl fmt::Display for ErrorWrapper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)
     }
@@ -220,40 +213,53 @@ mod private {
     pub trait BoxFail {
         fn set_cause(self, err: &mut Error);
     }
-    impl <T: Fail> BoxFail for T {
+    impl <T: StdError + Send + 'static> BoxFail for T {
         default fn set_cause(self, err: &mut Error) {
             err.0.cause = Some(Box::new(self));
         }
     }
-    impl BoxFail for ErrorAsFail {
-        fn set_cause(self, err: &mut Error) {
-            if (self.0).0.cause.is_some() {
-                err.0.cause = Some(Box::new(self));
-            } else if let ErrorKind::GenericFail(_) = &(self.0).0.kind {
-                match (self.0).0.kind {
-                    ErrorKind::GenericFail(e) => {
+    impl BoxFail for Error {
+        fn set_cause(mut self, err: &mut Error) {
+            // Only keep a backtrace at the highest level.
+            if err.0.backtrace.is_none() {
+                err.0.backtrace = self.0.backtrace.take();
+            } else {
+                self.0.backtrace = None;
+            }
+
+            if self.0.cause.is_some() {
+                err.0.cause = Some(Box::new(self.into_std_error()));
+            } else if let ErrorKind::GenericError(_) = &self.0.kind {
+                // collapse the wrapped error into our cause field.
+                match self.0.kind {
+                    ErrorKind::GenericError(e) => {
                         err.0.cause = Some(e);
                         if err.0.backtrace.is_none() {
-                            err.0.backtrace = (self.0).0.backtrace;
+                            err.0.backtrace = self.0.backtrace;
                         }
                     }
                     _ => unreachable!(),
                 }
             } else {
-                err.0.cause = Some(Box::new(self));
+                err.0.cause = Some(Box::new(self.into_std_error()));
             }
+        }
+    }
+    impl BoxFail for ErrorWrapper {
+        fn set_cause(self, err: &mut Error) {
+            BoxFail::set_cause(self.0, err)
         }
     }
 
     pub trait ToError {
         fn into_sylphie_error(self) -> Error;
     }
-    impl <T: Fail> ToError for T {
+    impl <T: StdError + Send + 'static> ToError for T {
         default fn into_sylphie_error(self) -> Error {
-            Error::new(ErrorKind::GenericFail(Box::new(self)))
+            Error::new(ErrorKind::GenericError(Box::new(self)))
         }
     }
-    impl ToError for ErrorAsFail {
+    impl ToError for ErrorWrapper {
         fn into_sylphie_error(self) -> Error {
             self.0
         }
@@ -292,7 +298,7 @@ mod private {
             fn error_branch<T2>(
                 kind: impl FnOnce() -> ErrorKind, map: impl FnOnce(Error) -> Error,
             ) -> Result<T2> {
-                Err(map(Error::new_with_backtrace(kind())))
+                Err(map(Error::new(kind())))
             }
             match self {
                 Some(x) => Ok(x),
@@ -309,8 +315,7 @@ mod private {
             fn error_branch<T2, E2: private::ToErrorWithSelf>(
                 e: E2, kind: impl FnOnce() -> ErrorKind, map: impl FnOnce(Error) -> Error,
             ) -> Result<T2> {
-                let cause = e.into_sylphie_error().with_backtrace().into_fail();
-                Err(map(Error::new_with_cause(kind(), cause)))
+                Err(map(Error::new_with_cause(kind(), e.into_sylphie_error().into_std_error())))
             }
             match self {
                 Ok(x) => Ok(x),
