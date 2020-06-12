@@ -24,11 +24,34 @@ fn get_exe_dir() -> PathBuf {
     path.pop();
     path
 }
-fn get_root_path() -> PathBuf {
-    match env::var_os("CARGO_MANIFEST_DIR") {
-        Some(manifest_dir) => PathBuf::from(manifest_dir),
-        None => get_exe_dir(),
+fn get_dir_from_cargo(path: PathBuf) -> Option<PathBuf> {
+    let mut cur_path = path.clone();
+    cur_path.push("Cargo.toml");
+    if !(cur_path.exists() || cur_path.is_file()) {
+        return None
     }
+    cur_path.pop();
+    cur_path.push(".git");
+    if cur_path.exists() && cur_path.is_dir() {
+        // We found a .git directory. Assume there is no workspace setup.
+        return None
+    }
+
+    // Check for the most typical workspace setup.
+    cur_path.pop();
+    cur_path.pop();
+    cur_path.push("Cargo.toml");
+    if cur_path.exists() && cur_path.is_file() {
+        cur_path.pop();
+        Some(cur_path)
+    } else {
+        Some(path)
+    }
+}
+fn get_root_path() -> PathBuf {
+    env::var_os("CARGO_MANIFEST_DIR")
+        .and_then(|x| get_dir_from_cargo(PathBuf::from(x)))
+        .unwrap_or_else(|| get_exe_dir())
 }
 
 /// Dispatched when the bot is started, before user interface is initialized.

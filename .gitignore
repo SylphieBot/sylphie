@@ -1,6 +1,9 @@
-/target
+# Cargo/IDE related files
 /.idea
 /*.iml
+/target
 /Cargo.lock
-/examples/*
-/run
+
+# Private development files
+/db
+/logs

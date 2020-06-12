@@ -3,3 +3,8 @@ members = [
     "sylphie_core",
     "sylphie_derive",
 ]
+
+[profile.release]
+opt-level = 3
+debug = 2
+lto = true
