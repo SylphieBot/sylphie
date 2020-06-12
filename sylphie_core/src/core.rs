@@ -2,14 +2,13 @@ use crate::database::*;
 use crate::errors::*;
 use crate::interface::*;
 use crate::module::{Module, ModuleManager};
+use crate::utils::GlobalInstance;
 use fs2::*;
+use lazy_static::*;
 use static_events::*;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static CORE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn check_lock(path: impl AsRef<Path>) -> Result<File> {
     let mut options = OpenOptions::new();
@@ -81,7 +80,7 @@ impl <R: Module> SylphieEvents<R> {
                 info!("Please use '.abort!!' if you really mean to forcefully stop the bot.");
             }
             x if x.starts_with('.') => {
-                info!("Unknown built-in command. Use '.help' for more information.");
+                error!("Unknown built-in command. Use '.help' for more information.");
             }
             _ => return EvOk
         }
@@ -124,6 +123,10 @@ impl <R: Module> CoreRef<R> {
         self.0.try_lock()
     }
 
+}
+
+lazy_static! {
+    static ref SYLPHIE_RUNNING_GUARD: GlobalInstance<()> = GlobalInstance::new();
 }
 
 pub struct SylphieCore<R: Module> {
@@ -176,24 +179,26 @@ impl <R: Module> SylphieCore<R> {
     /// Only one bot core may be started in the lifetime of a process. Any started after the
     /// first will immediately panic.
     pub fn start(mut self) -> Result<()> {
-        if CORE_STARTED.swap(true, Ordering::SeqCst) {
-            // TODO: Eventually work on relaxing this restriction to "one at once."
-            panic!("Only one bot core may be started in the lifetime of a process.");
-        }
+        // acquire the per-process lock
+        let _guard = SYLPHIE_RUNNING_GUARD.set_instance(());
 
+        // initialize early logging and related processes
         early_init();
 
+        // acquire the database lock
         let _lock = self.lock()?;
 
-        let (module_manager, root_module) = ModuleManager::init(CoreRef(self.events.clone()));
-        let loaded_crates = module_manager.modules_list();
+        // initialize the interface system
         let interface_info = InterfaceInfo {
             bot_name: self.bot_name.clone(),
             root_path: self.root_path.clone(),
-            loaded_crates,
         };
         let interface = Interface::new(interface_info)
             .internal_err(|| "Could not initialize user interface.")?;
+
+        // initialize the module tree
+        let (module_manager, root_module) = ModuleManager::init(CoreRef(self.events.clone()));
+        interface.set_loaded_crates(module_manager.modules_list());
 
         self.events.activate_handle(SylphieEvents {
             root_module,
@@ -239,6 +244,6 @@ impl <E: Events> SylphieHandlerExt for Handler<E> {
 /// This may be called multiple times without errors. However, it will set a logger to the
 /// `log` crate, and will panic if another has already been set.
 pub fn early_init() {
-    crate::interface::init_early_logging();
-    crate::errors::activate_panic_hook();
+    crate::interface::init_interface();
+    crate::errors::init_panic_hook();
 }

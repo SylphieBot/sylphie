@@ -1,13 +1,14 @@
 //! Handles storing panic info into [`Error`] structs.
 
 use backtrace::Backtrace;
+use parking_lot::Once;
 use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::fmt;
 use std::future::*;
 use std::panic::{self, *};
 use std::pin::Pin;
-use std::sync::Once;
 use std::task::{Context, Poll};
 
 /// The location a panic occurred at.
@@ -19,6 +20,21 @@ pub struct PanicLocation {
     pub line: u32,
     /// The column the panic occurred at.
     pub col: u32,
+}
+impl fmt::Display for PanicLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file, self.line, self.col)
+    }
+}
+
+pub struct DisplayOptPanicLoc<'a>(pub &'a Option<PanicLocation>);
+impl <'a> fmt::Display for DisplayOptPanicLoc<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(x) => write!(f, " at {}", x),
+            None => Ok(()),
+        }
+    }
 }
 
 pub struct PanicInfo {
@@ -63,7 +79,7 @@ fn panic_hook(info: &panic::PanicInfo<'_>) {
     };
     PANIC_INFO.with(|info_ref| info_ref.borrow_mut().info = Some(info));
 }
-pub fn activate_panic_hook() {
+pub fn init_panic_hook() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let default_hook = panic::take_hook();

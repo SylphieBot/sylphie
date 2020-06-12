@@ -2,18 +2,17 @@ use chrono::Local;
 use crate::errors::*;
 use crate::interface::InterfaceShared;
 use crate::interface::terminal::Terminal;
+use parking_lot::Once;
 use static_events::*;
 use std::fmt::{Result as FmtResult, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Once};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tracing::{*, Metadata, Event};
 use tracing::span::{Attributes, Record};
-use tracing::subscriber::{DefaultGuard, Interest};
-use tracing_subscriber::{FmtSubscriber, EnvFilter, Layer};
+use tracing::subscriber::DefaultGuard;
+use tracing_subscriber::{FmtSubscriber, EnvFilter};
 use tracing_subscriber::fmt::format::{DefaultFields, Format, Full};
 use tracing_subscriber::fmt::time::FormatTime;
-use tracing_subscriber::layer::{Context, Layered};
 
 // TODO: Logging to file.
 

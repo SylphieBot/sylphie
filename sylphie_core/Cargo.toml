@@ -13,8 +13,9 @@ chrono = "0.4.11"
 enumset = "1.0.0"
 fs2 = "0.4.3"
 futures = "0.3.0"
+lazy_static = "1.4.0"
 linefeed = "0.6.0"
-minnie = { version = "0.1.0", path = "../../minnie" }
+minnie = { version = "0.1.0", git = "https://github.com/SylphieBot/minnie.git" }
 parking_lot = { version = "0.10.0", features = ["deadlock_detection"] }
 r2d2 = "0.8.5"
 rusqlite = "0.23.0"

@@ -69,9 +69,11 @@ struct ModuleAttrs {
     integral_recursive: bool,
     #[darling(default)]
     anonymous: bool,
+    #[darling(default)]
+    __sylphie_self_crate: bool,
 }
 
-fn git_metadata() -> std::result::Result<SynTokenStream, GitError> {
+fn git_metadata(core: &SynTokenStream) -> std::result::Result<SynTokenStream, GitError> {
     let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
         Ok(v) => v,
         _ => return Err(GitError::from_str("env error")),
@@ -87,39 +89,40 @@ fn git_metadata() -> std::result::Result<SynTokenStream, GitError> {
         .count() as u32;
 
     Ok(quote! {
-        ::sylphie_core::module::GitInfo {
+        #core::module::GitInfo {
             name: #name,
             revision: #revision,
             modified_files: #changed_files,
         }
     })
 }
-fn module_metadata(attrs: &ModuleAttrs) -> SynTokenStream {
+fn module_metadata(core: &SynTokenStream, attrs: &ModuleAttrs) -> SynTokenStream {
     let mut flags = SynTokenStream::new();
     if attrs.integral {
-        flags.extend(quote! { | ::sylphie_core::module::ModuleFlag::Integral });
+        flags.extend(quote! { | #core::module::ModuleFlag::Integral });
     }
     if attrs.integral_recursive {
-        flags.extend(quote! { | ::sylphie_core::module::ModuleFlag::IntegralRecursive });
+        flags.extend(quote! { | #core::module::ModuleFlag::IntegralRecursive });
     }
     if attrs.anonymous {
-        flags.extend(quote! { | ::sylphie_core::module::ModuleFlag::Anonymous });
+        flags.extend(quote! { | #core::module::ModuleFlag::Anonymous });
     }
-    let git_info = match git_metadata() {
-        Ok(v) => quote! { ::sylphie_core::__macro_export::Some(#v) },
-        _ => quote! { ::sylphie_core::__macro_export::None },
+    let git_info = match git_metadata(core) {
+        Ok(v) => quote! { #core::__macro_export::Some(#v) },
+        _ => quote! { #core::__macro_export::None },
     };
     quote! {
-        ::sylphie_core::module::ModuleMetadata {
+        #core::module::ModuleMetadata {
             module_path: ::std::module_path!(),
             crate_version: ::std::option_env!("CARGO_PKG_VERSION").unwrap_or("<unknown>"),
             git_info: #git_info,
-            flags: ::sylphie_core::__macro_export::EnumSet::new() #flags,
+            flags: #core::__macro_export::EnumSet::new() #flags,
         }
     }
 }
-fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
-    let attrs: ModuleAttrs = ModuleAttrs::from_derive_input(input)?;
+fn derive_module(
+    core: &SynTokenStream, input: &mut DeriveInput, attrs: &ModuleAttrs,
+) -> Result<SynTokenStream> {
     let input_span = input.span();
     let data = if let Data::Struct(data) = &mut input.data {
         data
@@ -132,7 +135,7 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
         error(input_span, "#[derive(Module)] can only be used on structs with named fields.")?;
     }
 
-    let metadata = module_metadata(&attrs);
+    let metadata = module_metadata(core, &attrs);
 
     let ident = &input.ident;
     let impl_generics = &input.generics;
@@ -169,9 +172,9 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
                 __mod_walker.register_module(__mod_core, __mod_parent, stringify!(#name))
             });
         } else if attrs.is_core_ref {
-            fields.push(quote! { ::sylphie_core::__macro_priv::cast_core_ref(__mod_core) });
+            fields.push(quote! { #core::__macro_priv::cast_core_ref(__mod_core) });
         } else {
-            fields.push(quote! { ::sylphie_core::__macro_export::Default::default() });
+            fields.push(quote! { #core::__macro_export::Default::default() });
         }
     }
     let info_field = match info_field {
@@ -180,22 +183,22 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
     };
 
     Ok(quote! {
-        impl #bounds ::sylphie_core::module::Module for #ident #ty_bounds #where_bounds {
-            fn metadata(&self) -> ::sylphie_core::module::ModuleMetadata {
+        impl #bounds #core::module::Module for #ident #ty_bounds #where_bounds {
+            fn metadata(&self) -> #core::module::ModuleMetadata {
                 #metadata
             }
 
-            fn info(&self) -> &::sylphie_core::module::ModuleInfo {
+            fn info(&self) -> &#core::module::ModuleInfo {
                 &self.#info_field
             }
-            fn info_mut(&mut self) -> &mut ::sylphie_core::module::ModuleInfo {
+            fn info_mut(&mut self) -> &mut #core::module::ModuleInfo {
                 &mut self.#info_field
             }
 
-            fn init_module<R: ::sylphie_core::module::Module>(
-                __mod_core: ::sylphie_core::core::CoreRef<R>,
+            fn init_module<R: #core::module::Module>(
+                __mod_core: #core::core::CoreRef<R>,
                 __mod_parent: &str,
-                __mod_walker: &mut ::sylphie_core::module::ModuleTreeWalker,
+                __mod_walker: &mut #core::module::ModuleTreeWalker,
             ) -> Self {
                 #ident {
                     #(#field_names: #fields,)*
@@ -207,13 +210,19 @@ fn derive_module(input: &mut DeriveInput) -> Result<SynTokenStream> {
 
 pub fn derive_events(input: TokenStream) -> Result<TokenStream> {
     let mut input: DeriveInput = parse(input)?;
+    let attrs: ModuleAttrs = ModuleAttrs::from_derive_input(&input)?;
 
-    let module_impl = match derive_module(&mut input) {
+    let core = if attrs.__sylphie_self_crate {
+        quote! { crate }
+    } else {
+        quote! { ::sylphie_core }
+    };
+    let module_impl = match derive_module(&core, &mut input, &attrs) {
         Ok(v) => v,
         Err(e) => e.emit().into(),
     };
     let events = DeriveStaticEvents::new(
-        &input, Some(quote! { ::sylphie_core::__macro_export::static_events }),
+        &input, Some(quote! { #core::__macro_export::static_events }),
     )?;
     let events_impl = events.generate();
 

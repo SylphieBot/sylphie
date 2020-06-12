@@ -10,7 +10,7 @@ pub(crate) use std::result::{Result as StdResult};
 
 mod panic;
 pub use panic::PanicLocation;
-pub(crate) use panic::activate_panic_hook;
+pub(crate) use panic::init_panic_hook;
 
 /// The type of error contained within an [`Error`].
 #[derive(Error, Debug)]
@@ -19,8 +19,8 @@ pub enum ErrorKind {
     #[error("Internal error: {0}")]
     InternalError(Cow<'static, str>),
     /// An panic occurred.
-    #[error("{0}")]
-    Panicked(Cow<'static, str>),
+    #[error("Panicked with '{0}' {}", panic::DisplayOptPanicLoc(&.1))]
+    Panicked(Cow<'static, str>, Option<PanicLocation>),
     /// An error occurred in a command.
     ///
     /// These errors are meant to be reported to the user and are not internal errors.
@@ -42,7 +42,6 @@ pub enum ErrorKind {
 struct ErrorData {
     kind: ErrorKind,
     backtrace: Option<Backtrace>,
-    panic_loc: Option<PanicLocation>,
     cause: Option<Box<dyn StdError + Send + 'static>>,
 }
 
@@ -57,7 +56,7 @@ impl Error {
     #[inline(never)] #[cold]
     pub fn new(kind: ErrorKind) -> Self {
         Error(Box::new(ErrorData {
-            kind, backtrace: None, panic_loc: None, cause: None,
+            kind, backtrace: None, cause: None,
         }))
     }
 
@@ -99,9 +98,8 @@ impl Error {
 
     #[inline(never)] #[cold]
     fn wrap_panic(panic: panic::PanicInfo) -> Error {
-        let mut err = Error::new(ErrorKind::Panicked(panic.payload));
+        let mut err = Error::new(ErrorKind::Panicked(panic.payload, panic.panic_loc));
         err.0.backtrace = Some(panic.backtrace);
-        err.0.panic_loc = panic.panic_loc;
         err
     }
 
@@ -149,11 +147,6 @@ impl Error {
                 _ => None,
             },
         }
-    }
-
-    /// Returns the location of a panic, if this is one.
-    pub fn panic_loc(&self) -> Option<&PanicLocation> {
-        self.0.panic_loc.as_ref()
     }
 
     /// Converts this into a [`std::error::Error`].
@@ -372,11 +365,11 @@ impl <T, U: private::ErrorContext<T>> ErrorFromContextExt<T> for U {
 macro_rules! cmd_error {
     ($format:expr, $($arg:expr),* $(,)?) => {{
         let text = format!($format, $($arg,)*);
-        let err = crate::errors::Error::new(crate::errors::ErrorKind::CommandError(text.into()));
+        let err = $crate::errors::Error::new($crate::errors::ErrorKind::CommandError(text.into()));
         return Err(err.into());
     }};
     ($str:expr) => {{
-        let err = crate::errors::Error::new(crate::errors::ErrorKind::CommandError($str.into()));
+        let err = $crate::errors::Error::new($crate::errors::ErrorKind::CommandError($str.into()));
         return Err(err.into());
     }};
 }
@@ -386,13 +379,13 @@ macro_rules! cmd_error {
 #[macro_export]
 macro_rules! bail {
     ($format:expr, $($arg:expr),* $(,)?) => {
-        return Err(crate::errors::Error::new_with_backtrace(
-            crate::errors::ErrorKind::InternalError(format!($format, $($arg,)*).into()),
+        return Err($crate::errors::Error::new_with_backtrace(
+            $crate::errors::ErrorKind::InternalError(format!($format, $($arg,)*).into()),
         ).into())
     };
     ($str:expr) => {
-        return Err(crate::errors::Error::new_with_backtrace(
-            crate::errors::ErrorKind::InternalError($str.into()),
+        return Err($crate::errors::Error::new_with_backtrace(
+            $crate::errors::ErrorKind::InternalError($str.into()),
         ).into())
     };
 }
