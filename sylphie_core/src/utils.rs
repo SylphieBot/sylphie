@@ -1,7 +1,6 @@
 //! Various utility types that are helpful in constructing Sylphie modules.
 
 use arc_swap::{ArcSwapOption, Guard as ArcSwapGuard};
-use parking_lot::{Mutex, MutexGuard};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering, fence};

@@ -366,11 +366,11 @@ macro_rules! cmd_error {
     ($format:expr, $($arg:expr),* $(,)?) => {{
         let text = format!($format, $($arg,)*);
         let err = $crate::errors::Error::new($crate::errors::ErrorKind::CommandError(text.into()));
-        return Err(err.into());
+        return $crate::__macro_export::Err(err.into());
     }};
     ($str:expr) => {{
         let err = $crate::errors::Error::new($crate::errors::ErrorKind::CommandError($str.into()));
-        return Err(err.into());
+        return $crate::__macro_export::Err(err.into());
     }};
 }
 
@@ -379,12 +379,12 @@ macro_rules! cmd_error {
 #[macro_export]
 macro_rules! bail {
     ($format:expr, $($arg:expr),* $(,)?) => {
-        return Err($crate::errors::Error::new_with_backtrace(
+        return $crate::__macro_export::Err($crate::errors::Error::new_with_backtrace(
             $crate::errors::ErrorKind::InternalError(format!($format, $($arg,)*).into()),
         ).into())
     };
     ($str:expr) => {
-        return Err($crate::errors::Error::new_with_backtrace(
+        return $crate::__macro_export::Err($crate::errors::Error::new_with_backtrace(
             $crate::errors::ErrorKind::InternalError($str.into()),
         ).into())
     };

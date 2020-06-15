@@ -1,9 +1,12 @@
 #![feature(specialization, type_alias_impl_trait, marker_trait_attr, trivial_bounds, const_if_match)] // TODO: Minimize
 #![deny(unused_must_use)]
 
+// TODO: Properly scope our macros using the local use trick.
+
 #[macro_use] extern crate tracing;
 #[macro_use] pub mod errors;
 
+pub mod commands;
 pub mod core;
 pub mod database;
 pub mod interface;
@@ -18,7 +21,7 @@ pub use crate::errors::{Result, Error};
 pub mod __macro_export {
     pub use enumset::EnumSet;
     pub use static_events;
-    pub use std::prelude::v1::{Default, Some, None};
+    pub use std::prelude::v1::{Default, Some, None, Ok, Err};
 }
 
 /// Various utility functions and types for macros. Not public API.

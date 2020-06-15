@@ -59,19 +59,21 @@ pub enum ModuleFlag {
 #[derive(Clone, Debug)]
 struct ModuleInfoInternal {
     id: ModuleId,
-    name: String,
+    name: Arc<str>,
     metadata: ModuleMetadata,
 }
 
 #[derive(Default, Clone, Debug)]
 pub struct ModuleInfo(Option<ModuleInfoInternal>);
-
 impl ModuleInfo {
     pub fn id(&self) -> ModuleId {
         self.0.as_ref().expect("Module not yet initialized!").id
     }
     pub fn name(&self) -> &str {
         &self.0.as_ref().expect("Module not yet initialized!").name
+    }
+    pub fn arc_name(&self) -> Arc<str> {
+        self.0.as_ref().expect("Module not yet initialized!").name.clone()
     }
     pub fn metadata(&self) -> ModuleMetadata {
         self.0.as_ref().expect("Module not yet initialized!").metadata
@@ -97,7 +99,7 @@ impl <'a> ModuleTreeWalker<'a> {
         let id = ModuleId(self.manager.module_id_root, self.manager.module_info.len() as u32);
         assert!(!self.manager.name_to_id.contains_key(&name));
         info.set(ModuleInfoInternal {
-            id, name: name.clone(), metadata,
+            id, name: name.clone().into(), metadata,
         });
         self.manager.module_info.push(info.clone());
         self.manager.name_to_id.insert(name, id);
