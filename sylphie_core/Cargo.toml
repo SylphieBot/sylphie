@@ -14,14 +14,16 @@ derive_setters = "0.1.4"
 enumset = "1.0.0"
 fs2 = "0.4.3"
 futures = "0.3.0"
+fxhash = "0.2.1"
 lazy_static = "1.4.0"
 linefeed = "0.6.0"
-minnie = { version = "0.1.0", git = "https://github.com/SylphieBot/minnie.git" }
+minnie_errors = { version = "0.1.0", git = "https://github.com/SylphieBot/minnie.git" }
 parking_lot = { version = "0.10.0", features = ["deadlock_detection"] }
 r2d2 = "0.8.5"
 rusqlite = "0.23.0"
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
 thiserror = "1.0.19"
+tokio = { version = "0.2.21", features = ["full"] }
 tracing = { version = "0.1.10", features = ["log"] }
 tracing-futures = "0.2.0"
 tracing-log = "0.1.1"

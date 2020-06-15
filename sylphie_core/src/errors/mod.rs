@@ -1,5 +1,5 @@
 use backtrace::Backtrace;
-use minnie::{Error as MinnieError};
+use minnie_errors::{Error as MinnieError};
 use std::borrow::Cow;
 use std::error::{Error as StdError};
 use std::fmt;

@@ -37,7 +37,7 @@ pub trait CommandImpl: Send + Sync + 'static {
 
     /// Executes the actual command.
     fn execute(
-        &self, ctx: &mut CommandCtx<impl Events>,
+        &self, ctx: &CommandCtx<impl Events>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 }
 
@@ -50,6 +50,7 @@ struct CommandData {
     module_name: Arc<str>,
     module_info: Option<ModuleInfo>,
     info: CommandInfo,
+    full_name: String,
     command_impl: Box<dyn CommandImplWrapper>,
 }
 impl Command {
@@ -81,10 +82,12 @@ impl Command {
         module_name: Arc<str>, module_info: Option<&ModuleInfo>, cmd_info: CommandInfo,
         command_impl: Box<dyn CommandImplWrapper>,
     ) -> Self {
+        let full_name = format!("{}:{}", module_name, cmd_info.name);
         Command(Arc::new(CommandData {
             module_name,
             module_info: module_info.map(Clone::clone),
             info: cmd_info,
+            full_name,
             command_impl,
         }))
     }
@@ -95,9 +98,9 @@ impl Command {
     }
 
     /// Executes the command in a given context.
-    pub async fn execute(&self, mut ctx: CommandCtx<impl Events>) -> Result<()> {
+    pub async fn execute(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
         ctx.set_command_hint(self);
-        self.0.command_impl.execute(&mut ctx)?.await
+        self.0.command_impl.execute(ctx)?.await
     }
 
     /// Returns the name of the module this command is defined in.
@@ -108,9 +111,14 @@ impl Command {
         &self.0.module_name
     }
 
-    /// Returns the name of the command.
+    /// Returns the short name of the command.
     pub fn name(&self) -> &str {
         &self.0.info.name
+    }
+
+    /// Returns the full name of the command.
+    pub fn full_name(&self) -> &str {
+        &self.0.full_name
     }
 
     /// Returns information about the module that defines this command, if one exists.
@@ -125,7 +133,7 @@ impl Command {
 }
 impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[Command '{}:{}']", self.0.module_name, self.0.info.name)
+        write!(f, "[Command '{}']", self.0.full_name)
     }
 }
 
@@ -143,7 +151,7 @@ fn type_mismatch<T>() -> Result<T> {
 /// An object-safe wrapper around [`CommandImpl`].
 trait CommandImplWrapper: Send + Sync + 'static {
     fn can_access(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<bool>>>>>;
-    fn execute(&self, ctx: &mut dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<()>>>>>;
+    fn execute(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<()>>>>>;
 }
 struct CommandImplTypeMarker<T, E>(T, PhantomData<fn(E)>);
 impl <T: CommandImpl, E: Events> CommandImplWrapper for CommandImplTypeMarker<T, E> {
@@ -153,8 +161,8 @@ impl <T: CommandImpl, E: Events> CommandImplWrapper for CommandImplTypeMarker<T,
             None => type_mismatch(),
         }
     }
-    fn execute(&self, ctx: &mut dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<()>>>>> {
-        match ctx.downcast_mut::<CommandCtx<E>>() {
+    fn execute(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<()>>>>> {
+        match ctx.downcast_ref::<CommandCtx<E>>() {
             Some(x) => Ok(CommandImpl::execute(&self.0, x)),
             None => type_mismatch(),
         }

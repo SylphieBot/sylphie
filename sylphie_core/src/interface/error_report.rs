@@ -145,7 +145,7 @@ fn fmt_deadlock(fmt: &mut fmt::Formatter<'_>, data: &Vec<Vec<DeadlockInfo>>) -> 
 fn write_report_file(logs_path: &Path, report: &str) -> Result<PathBuf> {
     let mut path = PathBuf::from(logs_path);
     fs::create_dir_all(&path)?;
-    let file_name = format!("error_report_{}.log", Utc::now().format("%Y%m%d_%H%M%S%f"));
+    let file_name = format!("error_report_{}.log", Utc::now().format("%Y-%m-%d_%H%M%S%f"));
     path.push(file_name);
 
     let mut out = File::create(&path)?;

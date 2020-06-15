@@ -221,9 +221,10 @@ pub fn derive_events(input: TokenStream) -> Result<TokenStream> {
         Ok(v) => v,
         Err(e) => e.emit().into(),
     };
-    let events = DeriveStaticEvents::new(
+    let mut events = DeriveStaticEvents::new(
         &input, Some(quote! { #core::__macro_export::static_events }),
     )?;
+    events.add_discriminator(parse2(quote! { #core::__macro_priv::ModuleImplPhase })?);
     let events_impl = events.generate();
 
     Ok((quote! {

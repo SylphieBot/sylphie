@@ -2,6 +2,7 @@
 #![deny(unused_must_use)]
 
 // TODO: Properly scope our macros using the local use trick.
+// TODO: Remove the minnie_errors dependency and add a mechanism to hook error reports.
 
 #[macro_use] extern crate tracing;
 #[macro_use] pub mod errors;
@@ -38,6 +39,9 @@ pub mod __macro_priv {
             panic!("Could not cast CoreRef. Check if the types are correct.");
         }
     }
+
+    /// The phase for `#[module_impl]`.
+    pub enum ModuleImplPhase { }
 }
 
 /// A convinence module containing common imports that are useful throughout Sylphie-based code.

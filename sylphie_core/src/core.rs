@@ -220,29 +220,35 @@ impl <R: Module> SylphieCore<R> {
         // acquire the database lock
         let _lock = self.lock()?;
 
-        // initialize the interface system
-        let interface_info = InterfaceInfo {
-            bot_name: self.bot_name.clone(),
-            root_path: self.root_path.clone(),
-        };
-        let interface = Interface::new(interface_info)
-            .internal_err(|| "Could not initialize user interface.")?;
+        // initializes the tokio runtime
+        let runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
+        runtime.enter(move || -> Result<()> {
+            // initialize the interface system
+            let interface_info = InterfaceInfo {
+                bot_name: self.bot_name.clone(),
+                root_path: self.root_path.clone(),
+            };
+            let interface = Interface::new(interface_info)
+                .internal_err(|| "Could not initialize user interface.")?;
 
-        // initialize the module tree
-        let (module_manager, root_module) = ModuleManager::init(CoreRef(self.events.clone()));
-        interface.set_loaded_crates(module_manager.modules_list());
+            // initialize the module tree
+            let (module_manager, root_module) =
+                ModuleManager::init(CoreRef(self.events.clone()));
+            interface.set_loaded_crates(module_manager.modules_list());
 
-        self.events.activate_handle(SylphieEvents {
-            root_module,
-            module_manager,
-            interface: interface.clone(),
-            database: self.init_db().internal_err(|| "Could not initialize database.")?,
-            core_ref: CoreRef(self.events.clone()),
-        });
-        interface.start(&self.events.lock())?;
-        self.events.lock().dispatch(ShutdownEvent);
-        self.events.shutdown(); // TODO: shutdown with progress
+            self.events.activate_handle(SylphieEvents {
+                root_module,
+                module_manager,
+                interface: interface.clone(),
+                database: self.init_db().internal_err(|| "Could not initialize database.")?,
+                core_ref: CoreRef(self.events.clone()),
+            });
+            interface.start(&self.events.lock())?;
+            self.events.lock().dispatch(ShutdownEvent);
+            self.events.shutdown(); // TODO: shutdown with progress
 
+            Ok(())
+        })?;
         Ok(())
     }
 }

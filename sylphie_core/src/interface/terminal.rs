@@ -48,7 +48,9 @@ impl Terminal {
                     self.0.interface.add_history_unique(line.clone());
 
                     // TODO: Error reporting.
-                    target.dispatch(TerminalCommandEvent(line));
+                    tokio::runtime::Handle::current().block_on(async {
+                        target.dispatch_async(TerminalCommandEvent(line)).await;
+                    });
                 }
                 Ok(Some(ReadResult::Eof)) => {
                     self.shutdown_msg()?;
