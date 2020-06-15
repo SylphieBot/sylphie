@@ -12,31 +12,64 @@ pub struct ArgParsingOptions {
 }
 
 #[derive(Clone, Debug)]
-enum ArgsSpan {
+enum ArgsType {
     Empty,
     Span(usize, usize),
     Inline(String),
 }
-impl ArgsSpan {
+impl ArgsType {
     fn as_str<'a: 'c, 'b: 'c, 'c>(&'a self, source: &'b str) -> &'c str {
-        match self {
-            ArgsSpan::Empty => "",
-            ArgsSpan::Span(start, end) => &source[*start..*end],
-            ArgsSpan::Inline(s) => s,
+        match &self {
+            ArgsType::Empty => "",
+            ArgsType::Span(start, end) => &source[*start..*end],
+            ArgsType::Inline(s) => s,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct ArgsSpan {
+    tp: ArgsType,
+    source_span: (usize, usize),
+}
+impl ArgsSpan {
+    fn is_empty(&self) -> bool {
+        match &self.tp {
+            ArgsType::Empty => true,
+            _ => false,
+        }
+    }
+
+    fn add_source_span(mut self, other: ArgsSpan) -> ArgsSpan {
+        let (start, end) = self.source_span;
+        let (o_start, o_end) = other.source_span;
+        self.source_span = (start.min(o_start), end.max(o_end));
+        self
+    }
+
     fn merge(source: &str, a: ArgsSpan, b: ArgsSpan) -> ArgsSpan {
-        match a {
-            ArgsSpan::Empty => b,
-            ArgsSpan::Span(start, end) => match b {
-                ArgsSpan::Empty => ArgsSpan::Span(start, end),
-                ArgsSpan::Span(b_start, b_end) if b_start == end => ArgsSpan::Span(start, b_end),
-                b => ArgsSpan::Inline(format!("{}{}", &source[start..end], b.as_str(source))),
+        let (a_start, a_end) = a.source_span;
+        let (b_start, b_end) = b.source_span;
+        let new_span = (a_start.min(b_start), a_end.max(b_end));
+
+        let new_tp = match a.tp {
+            ArgsType::Empty => b.tp,
+            ArgsType::Span(start, end) => match b.tp {
+                ArgsType::Empty => ArgsType::Span(start, end),
+                ArgsType::Span(b_start, b_end) if b_start == end => ArgsType::Span(start, b_end),
+                b => ArgsType::Inline(format!("{}{}", &source[start..end], b.as_str(source))),
             }
-            ArgsSpan::Inline(mut s) => {
-                s.push_str(b.as_str(source));
-                ArgsSpan::Inline(s)
+            ArgsType::Inline(mut s) => {
+                if !b.is_empty() {
+                    s.push_str(b.tp.as_str(source));
+                }
+                ArgsType::Inline(s)
             }
+        };
+
+        ArgsSpan {
+            tp: new_tp,
+            source_span: new_span,
         }
     }
 }
@@ -64,24 +97,47 @@ impl <'a> ParserTokenCtx<'a> {
             None => self.cur_arg = Some(args),
         }
     }
+    fn add_source_span(&mut self, args: ArgsSpan) {
+        match self.cur_arg.take() {
+            Some(x) => self.cur_arg = Some(x.add_source_span(args)),
+            None => self.cur_arg = Some(ArgsSpan {
+                tp: ArgsType::Empty,
+                source_span: args.source_span,
+            }),
+        }
+    }
     fn end_current_span(&mut self, idx: usize) -> ArgsSpan {
         if self.has_span {
             self.has_span = false;
-            ArgsSpan::Span(self.cur_span_start, idx)
+            ArgsSpan {
+                tp: ArgsType::Span(self.cur_span_start, idx),
+                source_span: (self.cur_span_start, idx),
+            }
         } else {
-            ArgsSpan::Empty
+            ArgsSpan {
+                tp: ArgsType::Empty,
+                source_span: (idx, idx),
+            }
         }
     }
+
     fn push_current_span(&mut self, idx: usize) {
-        if self.has_span {
-            let new_span = self.end_current_span(idx);
-            self.add_span(new_span);
-        }
+        let new_span = self.end_current_span(idx);
+        self.add_span(new_span);
+    }
+    fn drop_current_span(&mut self, idx: usize) {
+        let new_span = self.end_current_span(idx);
+        self.add_source_span(new_span);
     }
     fn push_truncated_span(&mut self, idx: usize, cut_start: usize, cut_end: usize) {
+        let init_span = (self.cur_span_start, idx);
         self.cur_span_start = idx.min(self.cur_span_start + cut_start);
         let idx = self.cur_span_start.max(idx - cut_end);
         self.push_current_span(idx);
+        self.add_source_span(ArgsSpan {
+            tp: ArgsType::Empty,
+            source_span: init_span,
+        });
     }
 
     fn push_char(&mut self, idx: usize) {
@@ -99,6 +155,10 @@ impl <'a> ParserTokenCtx<'a> {
                 self.args.push(span);
             }
         }
+    }
+    fn push_ignored_char(&mut self, idx: usize) {
+        self.is_new_arg = false;
+        self.push_current_span(idx);
     }
 }
 
@@ -145,14 +205,10 @@ impl Args {
         let mut markdown_end_quote_count = 0;
 
         // We wrap this in a loop so we can recover from unclosed quotes.
-        println!("start");
         let mut recovery_start = 0;
         'main: loop {
-            println!("loop from {}", recovery_start);
             let loop_start = recovery_start;
             for (idx, ch) in source[recovery_start..source.len()].char_indices() {
-                println!("{} {:?} {:?}", idx, ch, ctx);
-
                 let idx = loop_start + idx;
                 let parse_quotes = !is_escaped && !has_recovered;
                 let is_normal_quote = is_quoted && !is_markdown_quote;
@@ -176,13 +232,13 @@ impl Args {
                         is_quoted = true;
                         is_markdown_quote = false;
                         // ends the current span
-                        ctx.push_current_span(idx);
+                        ctx.push_ignored_char(idx);
                     }
                     // Handle ending plain quotes.
                     '"' if parse_quotes && is_normal_quote => {
                         is_quoted = false;
                         // ends the current span
-                        ctx.push_current_span(idx);
+                        ctx.push_ignored_char(idx);
                     }
 
                     // Handle starting markdown quotes.
@@ -241,12 +297,12 @@ impl Args {
 
                     // Handle an escaped \ or ".
                     '\\' | '"' if is_escaped => {
-                        ctx.end_current_span(idx); // remove the backslash
+                        ctx.drop_current_span(idx); // remove the backslash
                         ctx.push_char(idx); // add the character
                     }
                     // Handle an escaped whitespace character.
                     _ if ch.is_ascii_whitespace() && is_escaped && !is_quoted => {
-                        ctx.end_current_span(idx); // remove the backslash
+                        ctx.drop_current_span(idx); // remove the backslash
                         ctx.push_char(idx); // add the character
                     }
                     // End the argument if this is whitespace.
@@ -299,7 +355,10 @@ impl Args {
     }
 
     pub fn arg<'a: 'c, 'b: 'c, 'c>(&'a self, source: &'b str, i: usize) -> &'c str {
-        self.args_spans[i].as_str(source)
+        self.args_spans[i].tp.as_str(source)
+    }
+    pub fn source_span(&self, i: usize) -> (usize, usize) {
+        self.args_spans[i].source_span
     }
 }
 
@@ -314,13 +373,17 @@ mod tests {
         for i in 0..parsed.len() {
             args.push(parsed.arg(source, i));
         }
+        assert_eq!(args, expected);
+    }
+    fn check_parser_full(options: ArgParsingOptions, source: &str, expected: &[&str]) {
+        let parsed = Args::parse(options, source);
 
-        let mut expected_2 = Vec::new();
-        for i in 0..expected.len() {
-            expected_2.push(expected[i].to_owned());
+        let mut args = Vec::new();
+        for i in 0..parsed.len() {
+            let (start, end) = parsed.source_span(i);
+            args.push(&source[start..end]);
         }
-
-        assert_eq!(args, expected_2);
+        assert_eq!(args, expected);
     }
 
     #[test]
@@ -378,5 +441,12 @@ mod tests {
         let options = ArgParsingOptions::default().parse_markdown();
         check_parser(options, r#"`abc "def` ghi""# , &[r#"abc "def"#, r#"ghi""#]);
         check_parser(options, r#""abc `def" ghi`"# , &[r"abc `def", r"ghi`"]);
+    }
+
+    #[test]
+    fn source_span() {
+        let options = ArgParsingOptions::default().parse_markdown();
+        check_parser_full(options, r#"`abc "def` ghi""# , &[r#"`abc "def`"#, r#"ghi""#]);
+        check_parser_full(options, r#""abc `def" ghi`"# , &[r#""abc `def""#, r"ghi`"]);
     }
 }

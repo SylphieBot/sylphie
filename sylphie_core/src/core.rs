@@ -25,6 +25,15 @@ fn get_exe_dir() -> PathBuf {
     path
 }
 fn get_dir_from_cargo(path: PathBuf) -> Option<PathBuf> {
+    // Check for other cargo-related env vars to be safe.
+    if env::var_os("CARGO").is_none() ||
+        env::var_os("CARGO_PKG_NAME").is_none() ||
+        env::var_os("CARGO_PKG_VERSION").is_none()
+    {
+        return None
+    }
+
+    // Check for a Cargo.toml
     let mut cur_path = path.clone();
     cur_path.push("Cargo.toml");
     if !(cur_path.exists() || cur_path.is_file()) {

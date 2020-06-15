@@ -24,15 +24,6 @@ pub trait CommandCtxImpl: Send + 'static {
     fn raw_message(&self) -> &str;
 }
 
-/// An interface containing all functions common to a [`CommandCtx`] and unerased command
-/// contexts.
-///
-/// This is meant as a utility for working with modules that provide a wrapper over commmand
-/// contexts that expose context-specific functions.
-pub trait CommandCtxInterface<E: Events> {
-    // TODO
-}
-
 /// The context for a given command.
 pub struct CommandCtx<E: Events> {
     handle: Handler<E>,
