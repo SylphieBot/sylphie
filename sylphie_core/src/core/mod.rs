@@ -1,3 +1,5 @@
+use crate::commands::commands::CommandImplConstructor;
+use crate::commands::manager::CommandManager;
 use crate::database::*;
 use crate::errors::*;
 use crate::interface::*;
@@ -9,6 +11,9 @@ use static_events::*;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::marker::PhantomData;
+
+mod events;
 
 fn check_lock(path: impl AsRef<Path>) -> Result<File> {
     let mut options = OpenOptions::new();
@@ -80,54 +85,13 @@ simple_event!(ShutdownStartedEvent);
 #[derive(Events)]
 pub struct SylphieEvents<R: Module> {
     #[subhandler] root_module: R,
+    #[subhandler] events: events::SylphieEventsImpl<R>,
+    #[subhandler] command_constructor: CommandImplConstructor<SylphieEvents<R>>,
     #[service] module_manager: ModuleManager,
     #[service] interface: Interface,
     #[service] database: Database,
     #[service] core_ref: CoreRef<R>,
-}
-
-#[events_impl]
-impl <R: Module> SylphieEvents<R> {
-    #[event_handler]
-    fn builtin_commands(
-        &self, target: &Handler<impl Events>, command: &TerminalCommandEvent,
-    ) -> EventResult {
-        match command.0.as_str().trim() {
-            ".help" => {
-                info!("Built-in commands:");
-                info!(".help - Shows this help message.");
-                info!(".info - Prints information about the bot.");
-                info!(".shutdown - Shuts down the bot.");
-                info!(".abort!! - Forcefully shuts down the bot.");
-            }
-            ".info" => {
-                // TODO: Implement.
-            }
-            ".shutdown" => target.shutdown_bot(),
-            ".abort!!" => {
-                eprintln!("(abort)");
-                ::std::process::abort()
-            }
-            x if x.starts_with(".abort") => {
-                info!("Please use '.abort!!' if you really mean to forcefully stop the bot.");
-            }
-            x if x.starts_with('.') => {
-                error!("Unknown built-in command. Use '.help' for more information.");
-            }
-            _ => return EvOk
-        }
-        EvCancel
-    }
-
-    #[event_handler(EvAfterEvent)]
-    fn unknown_terminal_command(&self, _: &TerminalCommandEvent) {
-        error!("Unknown command.");
-    }
-
-    #[event_handler]
-    fn shutdown_handler(&self, _: &ShutdownStartedEvent) {
-        self.interface.shutdown();
-    }
+    #[service] cmd_manager: CommandManager,
 }
 
 /// A handle that allows operations to be performed on the bot outside the events loop.
@@ -238,11 +202,15 @@ impl <R: Module> SylphieCore<R> {
 
             self.events.activate_handle(SylphieEvents {
                 root_module,
+                events: events::SylphieEventsImpl(PhantomData),
+                command_constructor: CommandImplConstructor(PhantomData),
                 module_manager,
                 interface: interface.clone(),
                 database: self.init_db().internal_err(|| "Could not initialize database.")?,
                 core_ref: CoreRef(self.events.clone()),
+                cmd_manager: CommandManager::new(),
             });
+            self.events.lock().dispatch(InitEvent);
             interface.start(&self.events.lock())?;
             self.events.lock().dispatch(ShutdownEvent);
             self.events.shutdown(); // TODO: shutdown with progress

@@ -1,20 +1,13 @@
-use crate::commands::commands::Command;
 use crate::commands::raw_args::*;
+use crate::core::{SylphieEvents, CoreRef};
 use crate::errors::*;
-use futures::*;
+use crate::module::Module;
+use futures::future::BoxFuture;
 use static_events::*;
 use std::any::Any;
-use std::pin::Pin;
-use std::cell::RefCell;
 
 /// The implementation of a command context.
-pub trait CommandCtxImpl: Send + 'static {
-    /// Hints to the command context the command that is being executed.
-    ///
-    /// This is primarily meant for reporting better errors to the user, and is automatically
-    /// called by [`Command::execute`].
-    fn set_command_hint(&self, _command: &Command) { }
-
+pub trait CommandCtxImpl: Sync + Send + 'static {
     /// Controls the way the arguments to commands in this context are parsed.
     fn args_parsing_options(&self) -> ArgParsingOptions {
         ArgParsingOptions::default()
@@ -26,9 +19,9 @@ pub trait CommandCtxImpl: Send + 'static {
     fn raw_message(&self) -> &str;
 
     /// Responds to the user with a given string.
-    fn respond(
-        &self, target: &Handler<impl Events>, msg: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<()>>>>;
+    fn respond<'a>(
+        &'a self, target: &'a Handler<impl Events>, msg: &'a str,
+    ) -> BoxFuture<'a, Result<()>>;
 }
 
 /// An argument to a command.
@@ -47,21 +40,20 @@ pub struct CommandArg<'a> {
 pub struct CommandCtx<E: Events> {
     handle: Handler<E>,
     args: Args,
-    command: RefCell<Option<Command>>,
     ctx_impl: Box<dyn CommandCtxImplWrapper<E>>,
 }
-impl <E: Events> CommandCtx<E> {
+impl <R: Module> CommandCtx<SylphieEvents<R>> {
     /// Creates a new command context given an implementation and a [`Handler`].
-    pub fn new(target: &Handler<E>, ctx_impl: impl CommandCtxImpl) -> Self {
+    pub fn new(core: &CoreRef<R>, ctx_impl: impl CommandCtxImpl) -> Self {
         let args = Args::parse(ctx_impl.args_parsing_options(), ctx_impl.raw_message());
         CommandCtx {
-            handle: target.clone(),
+            handle: core.lock(),
             args,
-            command: RefCell::new(None),
             ctx_impl: Box::new(ctx_impl),
         }
     }
-
+}
+impl <E: Events> CommandCtx<E> {
     /// Returns the underlying event handler.
     pub fn handler(&self) -> &Handler<E> {
         &self.handle
@@ -74,24 +66,9 @@ impl <E: Events> CommandCtx<E> {
         self.ctx_impl.as_any().downcast_ref::<T>()
     }
 
-    /// Pushes a command hint.
-    pub(in super) fn set_command_hint(&self, command: &Command) {
-        *self.command.borrow_mut() = Some(command.clone());
-        self.ctx_impl.set_command_hint(command);
-    }
-
     /// Returns the raw text of the command.
     pub fn raw_message(&self) -> &str {
         self.ctx_impl.raw_message()
-    }
-
-    /// Returns the command this context is executing.
-    ///
-    /// # Panics
-    ///
-    /// If this is called on a newly constructed context before it starts a command.
-    pub fn running_command(&self) -> Command {
-        self.command.borrow().as_ref().expect("No command is currently running.").clone()
     }
 
     /// Returns the number of arguments passed to this function.
@@ -126,23 +103,17 @@ impl <E: Events> CommandCtx<E> {
 }
 
 /// An object-safe wrapper around [`CommandCtxImpl`].
-trait CommandCtxImplWrapper<E: Events>: Send + 'static {
+trait CommandCtxImplWrapper<E: Events>: Sync + Send + 'static {
     fn as_any(&self) -> &dyn Any;
-    fn set_command_hint(&self, command: &Command);
     fn raw_message(&self) -> &str;
 
-    fn respond(
-        &self, target: &Handler<E>, msg: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<()>>>>;
+    fn respond<'a>(&'a self, target: &'a Handler<E>, msg: &'a str) -> BoxFuture<'a, Result<()>>;
 }
 impl <E: Events, T: CommandCtxImpl> CommandCtxImplWrapper<E> for T {
     fn as_any(&self) -> &dyn Any { self }
-    fn set_command_hint(&self, command: &Command) { self.set_command_hint(command); }
     fn raw_message(&self) -> &str { self.raw_message() }
 
-    fn respond(
-        &self, target: &Handler<E>, msg: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<()>>>> {
+    fn respond<'a>(&'a self, target: &'a Handler<E>, msg: &'a str) -> BoxFuture<'a, Result<()>> {
         self.respond(target, msg)
     }
 }

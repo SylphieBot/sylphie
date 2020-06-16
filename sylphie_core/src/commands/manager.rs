@@ -1,17 +1,17 @@
 use arc_swap::ArcSwapOption;
 use crate::commands::commands::Command;
+use crate::commands::ctx::CommandCtx;
 use crate::errors::*;
 use fxhash::{FxHashMap, FxHashSet};
 use static_events::*;
 use std::sync::Arc;
-use crate::commands::ctx::CommandCtx;
 
 /// The event used to register commands.
 #[derive(Debug, Default)]
 pub struct RegisterCommandsEvent {
     commands: Vec<Command>,
 }
-self_event!(Command);
+self_event!(RegisterCommandsEvent);
 impl RegisterCommandsEvent {
     /// Registers a new command.
     pub fn register_command(&mut self, command: Command) {
@@ -62,9 +62,6 @@ impl CommandSet {
     }
 }
 
-struct ReloadCommandManagerEvent;
-simple_event!(ReloadCommandManagerEvent);
-
 /// The result of a command lookup.
 pub enum CommandLookupResult {
     /// No matching commands were found.
@@ -82,6 +79,24 @@ pub struct CommandManager {
     data: ArcSwapOption<CommandSet>,
 }
 impl CommandManager {
+    pub(crate) fn new() -> Self {
+        CommandManager {
+            null: CommandSet {
+                list: Vec::new().into(),
+                by_name: Default::default(),
+            },
+            data: ArcSwapOption::new(None),
+        }
+    }
+
+    /// Reloads the command manager.
+    pub async fn reload(&self, target: &Handler<impl Events>) {
+        let new_set = CommandSet::from_event(target.dispatch_async(RegisterCommandsEvent {
+            commands: Vec::new(),
+        }).await);
+        self.data.store(Some(Arc::new(new_set)));
+    }
+
     /// Returns a list of all commands currently registered.
     pub fn command_list(&self) -> Arc<[Command]> {
         self.data.load().as_ref().map_or_else(|| self.null.list.clone(), |x| x.list.clone())
@@ -89,7 +104,7 @@ impl CommandManager {
 
     /// Looks ups a command for a given context.
     pub async fn lookup_command(
-        &self, ctx: &CommandCtx<impl Events>, command: &str,
+        &self, ctx: &CommandCtx<impl SyncEvents>, command: &str,
     ) -> Result<CommandLookupResult> {
         let split: Vec<_> = command.split(':').collect();
         let (group, name) = match split.as_slice() {
@@ -124,7 +139,7 @@ impl CommandManager {
     }
 
     /// Executes a command immediately.
-    pub async fn execute(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
+    pub async fn execute(&self, ctx: &CommandCtx<impl SyncEvents>) -> Result<()> {
         if ctx.args_count() == 0 {
             ctx.respond("Command context contains no arguments?").await?;
         } else {

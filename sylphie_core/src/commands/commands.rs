@@ -3,13 +3,12 @@ use crate::errors::*;
 use crate::module::*;
 use derive_setters::*;
 use futures::*;
+use futures::future::BoxFuture;
 use static_events::*;
 use std::any::Any;
 use std::borrow::Cow;
 use std::fmt;
-use std::future::Future;
 use std::marker::PhantomData;
-use std::pin::Pin;
 use std::sync::Arc;
 
 /// The metadata relating to a command.
@@ -31,19 +30,17 @@ impl CommandInfo {
 /// The implementation of a command.
 pub trait CommandImpl: Send + Sync + 'static {
     /// Checks if a the user can access this command.
-    fn can_access(
-        &self, ctx: &CommandCtx<impl Events>,
-    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>;
+    fn can_access<'a>(
+        &'a self, _ctx: &'a CommandCtx<impl SyncEvents>,
+    ) -> BoxFuture<'a, Result<bool>> {
+        async { Ok(true) }.boxed()
+    }
 
     /// Executes the actual command.
-    fn execute(
-        &self, ctx: &CommandCtx<impl Events>,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+    fn execute<'a>(&'a self, ctx: &'a CommandCtx<impl SyncEvents>) -> BoxFuture<'a, Result<()>>;
 }
 
 /// A fully resolved command.
-///
-/// Note that this type can only be used with the type of [`Handler`] it was created using.
 #[derive(Clone)]
 pub struct Command(Arc<CommandData>);
 struct CommandData {
@@ -74,9 +71,10 @@ impl Command {
     }
 
     fn construct_wrapper<E: Events>(
-        _target: &Handler<E>, command: impl CommandImpl,
+        target: &Handler<E>, command: impl CommandImpl,
     ) -> Box<dyn CommandImplWrapper> {
-        Box::new(CommandImplTypeMarker(command, PhantomData::<fn(E)>))
+        target.dispatch(ConstructWrapperEvent(Some(command)))
+            .expect("`Command`s may only be constructed in `SylphieCore`s.")
     }
     fn new_0(
         module_name: Arc<str>, module_info: Option<&ModuleInfo>, cmd_info: CommandInfo,
@@ -93,13 +91,12 @@ impl Command {
     }
 
     /// Checks whether the command can be executed in a given context.
-    pub async fn can_access(&self, ctx: &CommandCtx<impl Events>) -> Result<bool> {
+    pub async fn can_access(&self, ctx: &CommandCtx<impl SyncEvents>) -> Result<bool> {
         self.0.command_impl.can_access(ctx)?.await
     }
 
     /// Executes the command in a given context.
-    pub async fn execute(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
-        ctx.set_command_hint(self);
+    pub async fn execute(&self, ctx: &CommandCtx<impl SyncEvents>) -> Result<()> {
         self.0.command_impl.execute(ctx)?.await
     }
 
@@ -148,20 +145,36 @@ fn type_mismatch<T>() -> Result<T> {
     unreachable!();
 }
 
+struct ConstructWrapperEvent<C: CommandImpl>(Option<C>);
+simple_event!([C: CommandImpl] ConstructWrapperEvent<C>, Option<Box<dyn CommandImplWrapper>>);
+
+#[derive(Events)]
+pub(crate) struct CommandImplConstructor<E: SyncEvents>(pub PhantomData<E>);
+#[events_impl]
+impl <E: SyncEvents> CommandImplConstructor<E> {
+    #[event_handler]
+    fn construct_wrapper<C: CommandImpl>(
+        ev: &mut ConstructWrapperEvent<C>, state: &mut Option<Box<dyn CommandImplWrapper>>,
+    ) {
+        let command = ev.0.take().expect("None encountered while making command impl?");
+        *state = Some(Box::new(CommandImplTypeMarker(command, PhantomData::<fn(E)>)));
+    }
+}
+
 /// An object-safe wrapper around [`CommandImpl`].
 trait CommandImplWrapper: Send + Sync + 'static {
-    fn can_access(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<bool>>>>>;
-    fn execute(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<()>>>>>;
+    fn can_access<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<bool>>>;
+    fn execute<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<()>>>;
 }
 struct CommandImplTypeMarker<T, E>(T, PhantomData<fn(E)>);
-impl <T: CommandImpl, E: Events> CommandImplWrapper for CommandImplTypeMarker<T, E> {
-    fn can_access(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<bool>>>>> {
+impl <T: CommandImpl, E: SyncEvents> CommandImplWrapper for CommandImplTypeMarker<T, E> {
+    fn can_access<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<bool>>> {
         match ctx.downcast_ref::<CommandCtx<E>>() {
             Some(x) => Ok(CommandImpl::can_access(&self.0, x)),
             None => type_mismatch(),
         }
     }
-    fn execute(&self, ctx: &dyn Any) -> Result<Pin<Box<dyn Future<Output = Result<()>>>>> {
+    fn execute<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<()>>> {
         match ctx.downcast_ref::<CommandCtx<E>>() {
             Some(x) => Ok(CommandImpl::execute(&self.0, x)),
             None => type_mismatch(),
