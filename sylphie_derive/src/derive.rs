@@ -174,10 +174,10 @@ fn derive_module(
 
             let name = &field.ident;
             fields.push(quote! {
-                __mod_walker.register_module(__mod_core, __mod_parent, stringify!(#name))
+                __mod_walker.register_module(__mod_core.clone(), __mod_parent, stringify!(#name))
             });
         } else if attrs.is_core_ref {
-            fields.push(quote! { #core::__macro_priv::cast_core_ref(__mod_core) });
+            fields.push(quote! { #core::__macro_priv::cast_core_ref(__mod_core.clone()) });
         } else {
             fields.push(quote! { #core::__macro_export::Default::default() });
         }

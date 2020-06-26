@@ -35,6 +35,7 @@ impl CommandSet {
 
         let mut used_full_names = FxHashSet::default();
         let mut commands_for_name = FxHashMap::default();
+        let mut root_warning_given = false;
         for command in &list {
             if used_full_names.contains(command.full_name()) {
                 warn!(
@@ -42,6 +43,11 @@ impl CommandSet {
                     command.full_name(),
                 );
             } else {
+                if !root_warning_given && command.module_name() == "__root__" {
+                    warn!("Defining commands in the root module is not recommended.");
+                    root_warning_given = true;
+                }
+
                 used_full_names.insert(command.full_name());
                 commands_for_name.entry(command.name()).or_insert(Vec::new()).push(command);
             }

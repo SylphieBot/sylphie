@@ -4,8 +4,24 @@ use sylphie_core::commands::ctx::CommandCtx;
 
 #[derive(Module)]
 #[module(integral_recursive)]
+pub struct TestModule {
+    #[module_info] info: ModuleInfo,
+}
+#[module_impl]
+impl TestModule {
+    #[command]
+    async fn cmd_test_mod(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
+        ctx.respond(&format!("Calling module: {}", self.info.name())).await?;
+        Ok(())
+    }
+}
+
+#[derive(Module)]
+#[module(integral_recursive)]
 pub struct MyModule {
     #[module_info] info: ModuleInfo,
+    #[submodule] submod_a: TestModule,
+    #[submodule] submod_b: TestModule,
 }
 
 #[module_impl]

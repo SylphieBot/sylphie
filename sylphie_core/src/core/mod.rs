@@ -95,7 +95,6 @@ pub struct SylphieEvents<R: Module> {
 }
 
 /// A handle that allows operations to be performed on the bot outside the events loop.
-#[derive(Clone)]
 pub struct CoreRef<R: Module>(EventsHandle<SylphieEvents<R>>);
 impl <R: Module> CoreRef<R> {
     // Gets whether the bot has been shut down.
@@ -118,7 +117,11 @@ impl <R: Module> CoreRef<R> {
     pub fn try_lock(&self) -> Option<Handler<SylphieEvents<R>>> {
         self.0.try_lock()
     }
-
+}
+impl <R: Module> Clone for CoreRef<R> {
+    fn clone(&self) -> Self {
+        CoreRef(self.0.clone())
+    }
 }
 
 lazy_static! {
