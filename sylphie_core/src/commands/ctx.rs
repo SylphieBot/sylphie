@@ -5,6 +5,7 @@ use crate::module::Module;
 use futures::future::BoxFuture;
 use static_events::*;
 use std::any::Any;
+use std::sync::Arc;
 
 /// The implementation of a command context.
 pub trait CommandCtxImpl: Sync + Send + 'static {
@@ -37,7 +38,8 @@ pub struct CommandArg<'a> {
 }
 
 /// The context for a given command.
-pub struct CommandCtx<E: Events> {
+pub struct CommandCtx<E: Events>(Arc<CommandCtxData<E>>);
+struct CommandCtxData<E: Events> {
     handle: Handler<E>,
     args: Args,
     ctx_impl: Box<dyn CommandCtxImplWrapper<E>>,
@@ -46,34 +48,34 @@ impl <R: Module> CommandCtx<SylphieEvents<R>> {
     /// Creates a new command context given an implementation and a [`Handler`].
     pub fn new(core: &CoreRef<R>, ctx_impl: impl CommandCtxImpl) -> Self {
         let args = Args::parse(ctx_impl.args_parsing_options(), ctx_impl.raw_message());
-        CommandCtx {
+        CommandCtx(Arc::new(CommandCtxData {
             handle: core.lock(),
             args,
             ctx_impl: Box::new(ctx_impl),
-        }
+        }))
     }
 }
 impl <E: Events> CommandCtx<E> {
     /// Returns the underlying event handler.
     pub fn handler(&self) -> &Handler<E> {
-        &self.handle
+        &self.0.handle
     }
 
     /// Attempts to downcasts the internal [`CommandCtxImpl`] to a reference to the given type.
     ///
     /// This is not generally useful and should usually be wrapped by a context-specific helper.
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
-        self.ctx_impl.as_any().downcast_ref::<T>()
+        self.0.ctx_impl.as_any().downcast_ref::<T>()
     }
 
     /// Returns the raw text of the command.
     pub fn raw_message(&self) -> &str {
-        self.ctx_impl.raw_message()
+        self.0.ctx_impl.raw_message()
     }
 
     /// Returns the number of arguments passed to this function.
     pub fn args_count(&self) -> usize {
-        self.args.len()
+        self.0.args.len()
     }
 
     /// Returns an argument passed to this function.
@@ -87,18 +89,23 @@ impl <E: Events> CommandCtx<E> {
             None
         } else {
             let source = self.raw_message();
-            let source_span = self.args.source_span(i);
+            let source_span = self.0.args.source_span(i);
             Some(CommandArg {
                 source_span,
                 source_text: &source[source_span.0..source_span.1],
-                text: self.args.arg(source, i),
+                text: self.0.args.arg(source, i),
             })
         }
     }
 
     /// Responds to the user with a given string.
     pub async fn respond(&self, msg: &str) -> Result<()> {
-        self.ctx_impl.respond(&self.handle, msg).await
+        self.0.ctx_impl.respond(&self.0.handle, msg).await
+    }
+}
+impl <E: Events> Clone for CommandCtx<E> {
+    fn clone(&self) -> Self {
+        CommandCtx(self.0.clone())
     }
 }
 

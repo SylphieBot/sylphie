@@ -22,7 +22,7 @@ pub use crate::errors::{Result, Error};
 pub mod __macro_export {
     pub use enumset::EnumSet;
     pub use static_events;
-    pub use std::prelude::v1::{Default, Some, None, Ok, Err};
+    pub use std::prelude::v1::{Option, Default, Some, None, Ok, Err};
 }
 
 /// Various utility functions and types for macros. Not public API.
@@ -44,14 +44,25 @@ pub mod __macro_priv {
     pub enum ModuleImplPhase { }
 }
 
-/// A convinence module containing common imports that are useful throughout Sylphie-based code.
+/// A convenience module containing common imports that are useful throughout Sylphie-based code.
 pub mod prelude {
     pub use crate::{cmd_error, bail, ensure};
     pub use crate::core::{SylphieCore, SylphieHandlerExt, CoreRef};
+    pub use crate::derives::*;
     pub use crate::errors::{Error, ErrorKind, ErrorFromContextExt, Result};
     pub use crate::module::{Module, ModuleInfo};
+    pub use static_events::{Handler, Events};
     pub use static_events::{EventResult, EvOk, EvCancel, EvCancelStage};
     pub use static_events::{EvCheck, EvInit, EvBeforeEvent, EvOnEvent, EvAfterEvent};
     pub use std::result::{Result as StdResult};
-    pub use sylphie_derive::*;
+}
+
+/// Exports the derives used for this crate.
+pub mod derives {
+    #[doc(inline)] pub use sylphie_derive::{
+        CoreModule as Module,
+        module_impl_core as module_impl,
+        command,
+    };
+    #[doc(inline)] pub use static_events::event_handler;
 }

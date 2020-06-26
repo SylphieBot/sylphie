@@ -5,8 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub use sylphie_derive::Module;
-
 /// Information relating to the git repo a module is contained in, if any.
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct GitInfo {
@@ -138,8 +136,8 @@ pub struct ModuleManager {
 }
 impl ModuleManager {
     fn compute_source_crates(&mut self) {
-        #[derive(Module, Default)]
-        #[module(__sylphie_self_crate)]
+        use sylphie_derive::CoreInternalModule;
+        #[derive(CoreInternalModule, Default)]
         struct DummyModule {
             #[module_info] info: ModuleInfo,
         }

@@ -1,3 +1,4 @@
+use crate::CratePaths;
 use darling::*;
 use git2::{*, Error as GitError};
 use proc_macro::TokenStream;
@@ -69,11 +70,11 @@ struct ModuleAttrs {
     integral_recursive: bool,
     #[darling(default)]
     anonymous: bool,
-    #[darling(default)]
-    __sylphie_self_crate: bool,
 }
 
-fn git_metadata(core: &SynTokenStream) -> std::result::Result<SynTokenStream, GitError> {
+fn git_metadata(paths: &CratePaths) -> std::result::Result<SynTokenStream, GitError> {
+    let core = &paths.core;
+
     let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
         Ok(v) => v,
         _ => return Err(GitError::from_str("env error")),
@@ -96,7 +97,9 @@ fn git_metadata(core: &SynTokenStream) -> std::result::Result<SynTokenStream, Gi
         }
     })
 }
-fn module_metadata(core: &SynTokenStream, attrs: &ModuleAttrs) -> SynTokenStream {
+fn module_metadata(paths: &CratePaths, attrs: &ModuleAttrs) -> SynTokenStream {
+    let core = &paths.core;
+
     let mut flags = SynTokenStream::new();
     if attrs.integral {
         flags.extend(quote! { | #core::module::ModuleFlag::Integral });
@@ -107,7 +110,7 @@ fn module_metadata(core: &SynTokenStream, attrs: &ModuleAttrs) -> SynTokenStream
     if attrs.anonymous {
         flags.extend(quote! { | #core::module::ModuleFlag::Anonymous });
     }
-    let git_info = match git_metadata(core) {
+    let git_info = match git_metadata(paths) {
         Ok(v) => quote! { #core::__macro_export::Some(#v) },
         _ => quote! { #core::__macro_export::None },
     };
@@ -121,8 +124,10 @@ fn module_metadata(core: &SynTokenStream, attrs: &ModuleAttrs) -> SynTokenStream
     }
 }
 fn derive_module(
-    core: &SynTokenStream, input: &mut DeriveInput, attrs: &ModuleAttrs,
+    paths: &CratePaths, input: &mut DeriveInput, attrs: &ModuleAttrs,
 ) -> Result<SynTokenStream> {
+    let core = &paths.core;
+
     let input_span = input.span();
     let data = if let Data::Struct(data) = &mut input.data {
         data
@@ -135,7 +140,7 @@ fn derive_module(
         error(input_span, "#[derive(Module)] can only be used on structs with named fields.")?;
     }
 
-    let metadata = module_metadata(core, &attrs);
+    let metadata = module_metadata(paths, &attrs);
 
     let ident = &input.ident;
     let impl_generics = &input.generics;
@@ -208,19 +213,15 @@ fn derive_module(
     })
 }
 
-pub fn derive_events(input: TokenStream) -> Result<TokenStream> {
+pub(crate) fn derive_events(paths: &CratePaths, input: TokenStream) -> Result<TokenStream> {
     let mut input: DeriveInput = parse(input)?;
     let attrs: ModuleAttrs = ModuleAttrs::from_derive_input(&input)?;
-
-    let core = if attrs.__sylphie_self_crate {
-        quote! { crate }
-    } else {
-        quote! { ::sylphie_core }
-    };
-    let module_impl = match derive_module(&core, &mut input, &attrs) {
+    let module_impl = match derive_module(&paths, &mut input, &attrs) {
         Ok(v) => v,
         Err(e) => e.emit().into(),
     };
+
+    let core = &paths.core;
     let mut events = DeriveStaticEvents::new(
         &input, Some(quote! { #core::__macro_export::static_events }),
     )?;

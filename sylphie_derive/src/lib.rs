@@ -1,17 +1,49 @@
-#![feature(proc_macro_diagnostic, proc_macro_span, drain_filter)]
 #![recursion_limit="256"]
 
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
+use proc_macro2::{TokenStream as SynTokenStream};
 use static_events_internals::*;
+use quote::*;
 
 mod derive;
+mod module_impl;
+
+pub(crate) struct CratePaths {
+    core: SynTokenStream,
+    commands: SynTokenStream,
+}
+fn crate_paths_for_core() -> CratePaths {
+    CratePaths {
+        core: quote! { ::sylphie_core },
+        commands: quote! { ::sylphie_core::commands }
+    }
+}
+fn crate_paths_for_core_internal() -> CratePaths {
+    CratePaths {
+        core: quote! { crate },
+        commands: quote! { crate::commands },
+    }
+}
 
 // Note that we explicitly handle any attributes that are part of Events.
-#[proc_macro_derive(Module, attributes(
+#[proc_macro_derive(CoreModule, attributes(
     module, submodule, subhandler, service, module_info, init_with, core_ref,
 ))]
-pub fn derive_module(input: TokenStream) -> TokenStream {
-    try_syn!(derive::derive_events(input))
+pub fn derive_module_core(input: TokenStream) -> TokenStream {
+    try_syn!(derive::derive_events(&crate_paths_for_core(), input))
 }
+#[proc_macro_derive(CoreInternalModule, attributes(
+    module, submodule, subhandler, service, module_info, init_with, core_ref,
+))]
+pub fn derive_module_core_internal(input: TokenStream) -> TokenStream {
+    try_syn!(derive::derive_events(&crate_paths_for_core_internal(), input))
+}
+
+#[proc_macro_attribute]
+pub fn module_impl_core(_: TokenStream, item: TokenStream) -> TokenStream {
+    try_syn!(module_impl::derive_impl(&crate_paths_for_core(), item))
+}
+
+derived_attr!(command, module_impl);

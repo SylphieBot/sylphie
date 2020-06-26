@@ -31,13 +31,15 @@ impl CommandInfo {
 pub trait CommandImpl: Send + Sync + 'static {
     /// Checks if a the user can access this command.
     fn can_access<'a>(
-        &'a self, _ctx: &'a CommandCtx<impl SyncEvents>,
+        &'a self, _cmd: Command, _ctx: &'a CommandCtx<impl Events>,
     ) -> BoxFuture<'a, Result<bool>> {
         async { Ok(true) }.boxed()
     }
 
     /// Executes the actual command.
-    fn execute<'a>(&'a self, ctx: &'a CommandCtx<impl SyncEvents>) -> BoxFuture<'a, Result<()>>;
+    fn execute<'a>(
+        &'a self, cmd: Command, ctx: &'a CommandCtx<impl Events>,
+    ) -> BoxFuture<'a, Result<()>>;
 }
 
 /// A fully resolved command.
@@ -53,7 +55,7 @@ struct CommandData {
 impl Command {
     /// Creates a new command.
     pub fn new(
-        target: &Handler<impl Events>, defined_from: impl Module, info: CommandInfo,
+        target: &Handler<impl Events>, defined_from: &impl Module, info: CommandInfo,
         command: impl CommandImpl,
     ) -> Self {
         Self::new_0(
@@ -91,13 +93,13 @@ impl Command {
     }
 
     /// Checks whether the command can be executed in a given context.
-    pub async fn can_access(&self, ctx: &CommandCtx<impl SyncEvents>) -> Result<bool> {
-        self.0.command_impl.can_access(ctx)?.await
+    pub async fn can_access(&self, ctx: &CommandCtx<impl Events>) -> Result<bool> {
+        self.0.command_impl.can_access(self.clone(), ctx)?.await
     }
 
     /// Executes the command in a given context.
-    pub async fn execute(&self, ctx: &CommandCtx<impl SyncEvents>) -> Result<()> {
-        self.0.command_impl.execute(ctx)?.await
+    pub async fn execute(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
+        self.0.command_impl.execute(self.clone(), ctx)?.await
     }
 
     /// Returns the name of the module this command is defined in.
@@ -136,9 +138,8 @@ impl fmt::Debug for Command {
 
 #[inline(never)] #[cold]
 fn type_mismatch_0() -> Result<()> {
-    bail!("Type mismatch in CommandImplWrapper!\n\
-           Please pass the same type of `Handler<impl Events>` to \
-           both `Command::new` and the `CommandCtx` used with the command.")
+    bail!("Type mismatch in CommandImplWrapper! \
+           Please do not mix `Command`s from different `SylphieCore`s.")
 }
 fn type_mismatch<T>() -> Result<T> {
     type_mismatch_0()?;
@@ -149,9 +150,9 @@ struct ConstructWrapperEvent<C: CommandImpl>(Option<C>);
 simple_event!([C: CommandImpl] ConstructWrapperEvent<C>, Option<Box<dyn CommandImplWrapper>>);
 
 #[derive(Events)]
-pub(crate) struct CommandImplConstructor<E: SyncEvents>(pub PhantomData<E>);
+pub(crate) struct CommandImplConstructor<E: Events>(pub PhantomData<E>);
 #[events_impl]
-impl <E: SyncEvents> CommandImplConstructor<E> {
+impl <E: Events> CommandImplConstructor<E> {
     #[event_handler]
     fn construct_wrapper<C: CommandImpl>(
         ev: &mut ConstructWrapperEvent<C>, state: &mut Option<Box<dyn CommandImplWrapper>>,
@@ -163,20 +164,28 @@ impl <E: SyncEvents> CommandImplConstructor<E> {
 
 /// An object-safe wrapper around [`CommandImpl`].
 trait CommandImplWrapper: Send + Sync + 'static {
-    fn can_access<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<bool>>>;
-    fn execute<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<()>>>;
+    fn can_access<'a>(
+        &'a self, cmd: Command, ctx: &'a (dyn Any + Send + Sync),
+    ) -> Result<BoxFuture<'a, Result<bool>>>;
+    fn execute<'a>(
+        &'a self, cmd: Command, ctx: &'a (dyn Any + Send + Sync),
+    ) -> Result<BoxFuture<'a, Result<()>>>;
 }
 struct CommandImplTypeMarker<T, E>(T, PhantomData<fn(E)>);
-impl <T: CommandImpl, E: SyncEvents> CommandImplWrapper for CommandImplTypeMarker<T, E> {
-    fn can_access<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<bool>>> {
+impl <T: CommandImpl, E: Events> CommandImplWrapper for CommandImplTypeMarker<T, E> {
+    fn can_access<'a>(
+        &'a self, cmd: Command, ctx: &'a (dyn Any + Send + Sync),
+    ) -> Result<BoxFuture<'a, Result<bool>>> {
         match ctx.downcast_ref::<CommandCtx<E>>() {
-            Some(x) => Ok(CommandImpl::can_access(&self.0, x)),
+            Some(x) => Ok(CommandImpl::can_access(&self.0, cmd, x)),
             None => type_mismatch(),
         }
     }
-    fn execute<'a>(&'a self, ctx: &'a dyn Any) -> Result<BoxFuture<'a, Result<()>>> {
+    fn execute<'a>(
+        &'a self, cmd: Command, ctx: &'a (dyn Any + Send + Sync),
+    ) -> Result<BoxFuture<'a, Result<()>>> {
         match ctx.downcast_ref::<CommandCtx<E>>() {
-            Some(x) => Ok(CommandImpl::execute(&self.0, x)),
+            Some(x) => Ok(CommandImpl::execute(&self.0, cmd, x)),
             None => type_mismatch(),
         }
     }

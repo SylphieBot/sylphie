@@ -6,6 +6,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use static_events::*;
 use std::sync::Arc;
 
+// TODO: Case-insensitive command lookup.
+
 /// The event used to register commands.
 #[derive(Debug, Default)]
 pub struct RegisterCommandsEvent {
@@ -66,9 +68,9 @@ impl CommandSet {
 pub enum CommandLookupResult {
     /// No matching commands were found.
     NoneFound,
-    /// A single unambigious command was found.
+    /// A single unambiguous command was found.
     Found(Command),
-    /// An ambigious set of commands was found.
+    /// An ambiguous set of commands was found.
     Ambigious(Vec<Command>),
 }
 
@@ -104,7 +106,7 @@ impl CommandManager {
 
     /// Looks ups a command for a given context.
     pub async fn lookup_command(
-        &self, ctx: &CommandCtx<impl SyncEvents>, command: &str,
+        &self, ctx: &CommandCtx<impl Events>, command: &str,
     ) -> Result<CommandLookupResult> {
         let split: Vec<_> = command.split(':').collect();
         let (group, name) = match split.as_slice() {
@@ -139,7 +141,7 @@ impl CommandManager {
     }
 
     /// Executes a command immediately.
-    pub async fn execute(&self, ctx: &CommandCtx<impl SyncEvents>) -> Result<()> {
+    pub async fn execute(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
         if ctx.args_count() == 0 {
             ctx.respond("Command context contains no arguments?").await?;
         } else {
@@ -149,9 +151,18 @@ impl CommandManager {
                 CommandLookupResult::Found(cmd) => {
                     match cmd.execute(ctx).await {
                         Ok(()) => { }
-                        Err(e) => match e.error_kind() {
-                            ErrorKind::CommandError(e) => ctx.respond(e).await?,
-                            _ => e.report_error(), // TODO: Do something extensible
+                        Err(e) => {
+                            // split to avoid saving a `&ErrorKind` which is !Send
+                            let maybe_respond = match e.error_kind() {
+                                ErrorKind::CommandError(e) => Some(e),
+                                _ => { // TODO: Do something extensible
+                                    e.report_error();
+                                    None
+                                },
+                            };
+                            if let Some(e) = maybe_respond {
+                                ctx.respond(e).await?;
+                            }
                         },
                     }
                 }
