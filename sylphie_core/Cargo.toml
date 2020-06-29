@@ -32,5 +32,4 @@ tracing-subscriber = "0.2.0"
 sylphie_derive = { version = "0.1.0", path = "../sylphie_derive" }
 
 [build-dependencies]
-git2 = "0.13"
 rustc_version = "0.2"
