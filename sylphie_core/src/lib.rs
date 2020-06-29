@@ -45,7 +45,6 @@ pub mod __macro_priv {
 /// A convenience module containing common imports that are useful throughout Sylphie-based code.
 pub mod prelude {
     pub use crate::core::{SylphieCore, SylphieHandlerExt, CoreRef};
-    pub use crate::derives::*;
     pub use crate::errors::{Error, ErrorKind, ErrorFromContextExt, Result};
     pub use crate::errors::{cmd_error, bail, ensure};
     pub use crate::module::{Module, ModuleInfo};

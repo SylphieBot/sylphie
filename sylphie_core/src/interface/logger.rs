@@ -6,6 +6,7 @@ use parking_lot::Once;
 use static_events::prelude_async::*;
 use std::fmt::{Result as FmtResult, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{*, Metadata, Event};
 use tracing::span::{Attributes, Record};
@@ -13,6 +14,7 @@ use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 use tracing_subscriber::fmt::format::{DefaultFields, Format, Full};
 use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::filter::Directive;
 
 // TODO: Logging to file.
 
@@ -70,9 +72,21 @@ pub fn activate_log_compat() {
 
 /// An event that is sent by the logging framework to configure logging.
 pub struct SetupLoggerEvent {
-    pub console: tracing_subscriber::EnvFilter,
+    console: tracing_subscriber::EnvFilter,
 }
 self_event!(SetupLoggerEvent);
+impl SetupLoggerEvent {
+    pub fn add_console_directive(&mut self, directive: &str) {
+        let directive = match Directive::from_str(directive) {
+            Ok(x) => x,
+            Err(e) => {
+                error!("Failed to parse logging directive: {}", directive);
+                return
+            }
+        };
+        self.console = std::mem::take(&mut self.console).add_directive(directive);
+    }
+}
 
 pub fn activate_fallback() {
     static ONCE: Once = Once::new();

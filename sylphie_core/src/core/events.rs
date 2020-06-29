@@ -1,8 +1,9 @@
 use crate::core::{ShutdownStartedEvent, SylphieHandlerExt};
-use crate::interface::{TerminalCommandEvent, Interface};
+use crate::interface::{TerminalCommandEvent, Interface, SetupLoggerEvent};
 use crate::module::Module;
 use static_events::prelude_async::*;
 use std::marker::PhantomData;
+use tracing_subscriber::filter::Directive;
 
 #[derive(Events)]
 pub struct SylphieEventsImpl<R: Module>(pub PhantomData<R>);
@@ -51,5 +52,10 @@ impl <R: Module> SylphieEventsImpl<R> {
     #[event_handler]
     fn shutdown_handler(&self, target: &Handler<impl Events>, _: &ShutdownStartedEvent) {
         target.get_service::<Interface>().shutdown();
+    }
+
+    #[event_handler]
+    fn setup_logger(ev: &mut SetupLoggerEvent) {
+        ev.add_console_directive("sylphie_core=debug");
     }
 }

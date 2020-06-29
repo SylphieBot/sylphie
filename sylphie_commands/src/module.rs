@@ -4,11 +4,13 @@ use crate::manager::*;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use sylphie_core::core::{SylphieEvents, InitEvent};
-use sylphie_core::interface::TerminalCommandEvent;
+use sylphie_core::derives::*;
+use sylphie_core::interface::{TerminalCommandEvent, SetupLoggerEvent};
 use sylphie_core::prelude::*;
 
 /// The module containing the implementation of Sylphie commands.
 #[derive(Module)]
+#[module(integral)]
 pub struct CommandsModule<R: Module> {
     #[module_info] info: ModuleInfo,
 
@@ -35,6 +37,11 @@ impl <R: Module> CommandsModule<R> {
         if let Err(e) = target.get_service::<CommandManager>().execute(&ctx).await {
             e.report_error();
         }
+    }
+
+    #[event_handler]
+    fn setup_logger(ev: &mut SetupLoggerEvent) {
+        ev.add_console_directive("sylphie_commands=debug");
     }
 }
 

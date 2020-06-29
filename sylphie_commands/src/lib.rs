@@ -9,6 +9,12 @@ mod raw_args;
 
 pub use module::CommandsModule;
 
+/// A convenience module containing common imports.
+pub mod prelude {
+    pub use crate::commands::{Command, CommandInfo};
+    pub use crate::ctx::{CommandCtx, CommandArg};
+}
+
 /// Reexports of various types for macros. Not public API.
 #[doc(hidden)]
 pub mod __macro_export {

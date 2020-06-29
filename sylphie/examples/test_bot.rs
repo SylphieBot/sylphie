@@ -1,6 +1,5 @@
 use static_events::prelude_async::*;
-use sylphie_core::prelude::*;
-use sylphie_core::commands::ctx::CommandCtx;
+use sylphie::prelude::*;
 
 #[derive(Module)]
 #[module(integral_recursive)]
@@ -41,6 +40,12 @@ impl MyModule {
     }
 }
 
+sylphie_root_module! {
+    module Test {
+        test_bot: MyModule,
+    }
+}
+
 fn main() {
-    SylphieCore::<MyModule>::new("test_bot").start().unwrap();
+    SylphieCore::<Test>::new("test_bot").start().unwrap();
 }

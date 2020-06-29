@@ -1,5 +1,5 @@
 [package]
-name = "sylphie_commands"
+name = "sylphie"
 version = "0.1.0"
 authors = ["Lymia Aluysia <lymia@lymiahugs.com>"]
 edition = "2018"
@@ -7,12 +7,15 @@ edition = "2018"
 [features]
 
 [dependencies]
-arc-swap = "0.4.6"
 derive_setters = "0.1.4"
 enumset = "1.0.0"
 futures = "0.3.0"
-fxhash = "0.2.1"
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
 tracing = { version = "0.1.10", features = ["log"] }
 
+sylphie_commands = { version = "0.1.0", path = "../sylphie_commands" }
 sylphie_core = { version = "0.1.0", path = "../sylphie_core" }
+sylphie_derive = { version = "0.1.0", path = "../sylphie_derive" }
+
+[dev-dependencies]
+backtrace = "0.3.48"
