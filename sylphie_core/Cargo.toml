@@ -14,7 +14,6 @@ derive_setters = "0.1.4"
 enumset = "1.0.0"
 fs2 = "0.4.3"
 futures = "0.3.0"
-fxhash = "0.2.1"
 lazy_static = "1.4.0"
 linefeed = "0.6.0"
 minnie_errors = { version = "0.1.0", git = "https://github.com/SylphieBot/minnie.git" }
