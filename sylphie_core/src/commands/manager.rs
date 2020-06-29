@@ -6,7 +6,6 @@ use fxhash::{FxHashMap, FxHashSet};
 use static_events::prelude_async::*;
 use std::sync::Arc;
 
-// TODO: Case-insensitive command lookup.
 
 /// The event used to register commands.
 #[derive(Debug, Default)]
@@ -21,13 +20,19 @@ impl RegisterCommandsEvent {
     }
 }
 
-// TODO: Consider inlining strings here?
+struct StringInterner(FxHashMap<String, Arc<str>>);
+impl StringInterner {
+    pub fn intern(&mut self, s: String) -> Arc<str> {
+        (*self.0.entry(s.clone()).or_insert_with(|| s.into())).clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CommandSet {
     list: Arc<[Command]>,
     // a map of {base command name -> {possible prefix -> [possible commands]}}
     // an unprefixed command looks up an empty prefix
-    by_name: FxHashMap<String, FxHashMap<String, Vec<Command>>>,
+    by_name: FxHashMap<Arc<str>, FxHashMap<Arc<str>, Vec<Command>>>,
 }
 impl CommandSet {
     fn from_event(event: RegisterCommandsEvent) -> Self {
@@ -36,8 +41,10 @@ impl CommandSet {
         let mut used_full_names = FxHashSet::default();
         let mut commands_for_name = FxHashMap::default();
         let mut root_warning_given = false;
+        let mut interner = StringInterner(FxHashMap::default());
         for command in &list {
-            if used_full_names.contains(command.full_name()) {
+            let lc_name = command.full_name().to_ascii_lowercase();
+            if used_full_names.contains(&lc_name) {
                 warn!(
                     "Found duplicated command `{}`. One of the copies will not be accessible.",
                     command.full_name(),
@@ -48,22 +55,26 @@ impl CommandSet {
                     root_warning_given = true;
                 }
 
-                used_full_names.insert(command.full_name());
-                commands_for_name.entry(command.name()).or_insert(Vec::new()).push(command);
+                used_full_names.insert(lc_name);
+                commands_for_name.entry(command.name().to_ascii_lowercase())
+                    .or_insert(Vec::new()).push(command);
             }
         }
         let by_name = commands_for_name.into_iter().map(|(name, variants)| {
             let mut map = FxHashMap::default();
             for variant in variants {
-                let mod_name = variant.module_name();
-                map.entry(mod_name.to_string()).or_insert(Vec::new()).push(variant.clone());
-                map.entry(String::new()).or_insert(Vec::new()).push(variant.clone());
+                let mod_name = variant.module_name().to_ascii_lowercase();
+                map.entry(interner.intern(mod_name.to_string()))
+                    .or_insert(Vec::new()).push(variant.clone());
+                map.entry(interner.intern(String::new()))
+                    .or_insert(Vec::new()).push(variant.clone());
                 for (i, _) in mod_name.char_indices().filter(|(_, c)| *c == '.') {
                     let prefix = mod_name[i+1..].to_string();
-                    map.entry(prefix).or_insert(Vec::new()).push(variant.clone());
+                    map.entry(interner.intern(prefix))
+                        .or_insert(Vec::new()).push(variant.clone());
                 }
             }
-            (name.to_string(), map)
+            (interner.intern(name.to_string()), map)
         }).collect();
 
         CommandSet { list: list.into(), by_name }
@@ -114,6 +125,7 @@ impl CommandManager {
     pub async fn lookup_command(
         &self, ctx: &CommandCtx<impl Events>, command: &str,
     ) -> Result<CommandLookupResult> {
+        let command = command.to_ascii_lowercase();
         let split: Vec<_> = command.split(':').collect();
         let (group, name) = match split.as_slice() {
             &[name] => ("", name),

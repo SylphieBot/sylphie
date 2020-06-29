@@ -23,16 +23,18 @@ impl <R: Module> SylphieEventsImpl<R> {
     fn builtin_commands(
         &self, target: &Handler<impl Events>, command: &TerminalCommandEvent,
     ) -> EventResult {
-        match command.0.as_str().trim() {
+        match command.0.to_ascii_lowercase().as_str().trim() {
             ".help" => {
-                info!("Built-in commands:");
-                info!(".help - Shows this help message.");
-                info!(".info - Prints information about the bot.");
-                info!(".shutdown - Shuts down the bot.");
-                info!(".abort!! - Forcefully shuts down the bot.");
+                info!(target: "[term]", "Built-in commands:");
+                info!(target: "[term]", ".help - Shows this help message.");
+                info!(target: "[term]", ".info - Prints information about the bot.");
+                info!(target: "[term]", ".shutdown - Shuts down the bot.");
+                info!(target: "[term]", ".abort!! - Forcefully shuts down the bot.");
             }
             ".info" => {
-                // TODO: Implement.
+                for info_line in crate::interface::get_info_string().trim().split('\n') {
+                    info!(target: "[term]", "{}", info_line);
+                }
             }
             ".shutdown" => target.shutdown_bot(),
             ".abort!!" => {
@@ -40,10 +42,16 @@ impl <R: Module> SylphieEventsImpl<R> {
                 ::std::process::abort()
             }
             x if x.starts_with(".abort") => {
-                info!("Please use '.abort!!' if you really mean to forcefully stop the bot.");
+                info!(
+                    target: "[term]",
+                    "Please use '.abort!!' if you really mean to forcefully stop the bot.",
+                );
             }
             x if x.starts_with('.') => {
-                error!("Unknown built-in command. Use '.help' for more information.");
+                error!(
+                    target: "[term]",
+                    "Unknown built-in command. Use '.help' for more information.",
+                );
             }
             _ => return EvOk
         }
@@ -80,7 +88,7 @@ impl CommandCtxImpl for TerminalContext {
         &'a self, _: &'a Handler<impl Events>, msg: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
         async move {
-            info!(target: "sylphie_core", "{}", msg);
+            info!(target: "[term]", "{}", msg);
             Ok(())
         }.boxed()
     }

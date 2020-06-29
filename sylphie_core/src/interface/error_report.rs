@@ -53,10 +53,7 @@ impl ErrorCtx {
         CURRENT_CTX.set_instance(self)
     }
 
-    fn fmt_header(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "--- {} Error Report ---\n\n", &self.0.info.bot_name)?;
-
-        // write loaded modules information
+    fn fmt_info(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(packages) = &*self.0.loaded_crates.load() {
             write!(fmt, "Loaded packages:\n")?;
             for module in &***packages {
@@ -87,8 +84,11 @@ impl ErrorCtx {
             write!(fmt, concat!(", ", env!("PROFILE")))?;
         }
         write!(fmt, concat!("\nCompiler: ", env!("RUSTC_VERSION_STR"), "\n"))?;
-
         Ok(())
+    }
+    fn fmt_header(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "--- {} Error Report ---\n\n", &self.0.info.bot_name)?;
+        self.fmt_info(fmt)
     }
     fn fmt_logs(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO: Logs
@@ -226,4 +226,14 @@ pub fn report_error(err: &Error) {
     ) {
         error!("Error while reporting error: {}", e);
     }
+}
+
+pub(crate) fn get_info_string() -> String {
+    struct FormatInfo<'a>(&'a ErrorCtx);
+    impl <'a> fmt::Display for FormatInfo<'a> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            self.0.fmt_info(f)
+        }
+    }
+    format!("{}", FormatInfo(&*CURRENT_CTX.load()))
 }

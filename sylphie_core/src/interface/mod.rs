@@ -102,3 +102,6 @@ pub(crate) fn init_interface() {
     logger::activate_fallback();
     error_report::init_deadlock_detection();
 }
+pub(crate) fn get_info_string() -> String {
+    error_report::get_info_string()
+}

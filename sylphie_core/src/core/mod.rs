@@ -12,6 +12,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::marker::PhantomData;
+use std::time::Duration;
 
 mod events;
 
@@ -218,7 +219,18 @@ impl <R: Module> SylphieCore<R> {
             handle.block_on(self.events.lock().dispatch_async(InitEvent));
             interface.start(&self.events.lock())?;
             handle.block_on(self.events.lock().dispatch_async(ShutdownEvent));
-            self.events.shutdown(); // TODO: shutdown with progress
+
+            let mut ct = 0;
+            self.events.shutdown_with_progress(Duration::from_secs(1), || {
+                if ct % 5 == 1 {
+                    info!(
+                        "Waiting on {} threads to stop. Press {}+C to force shutdown.",
+                        self.events.lock_count(),
+                        if env!("TARGET").contains("apple-darwin") { "Command" } else { "Ctrl" },
+                    );
+                }
+                ct += 1;
+            });
 
             Ok(())
         })?;

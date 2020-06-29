@@ -1,4 +1,4 @@
-#![feature(specialization, type_alias_impl_trait, marker_trait_attr, trivial_bounds, const_if_match)] // TODO: Minimize
+#![feature(specialization)]
 #![deny(unused_must_use)]
 
 // TODO: Properly scope our macros using the local use trick.
