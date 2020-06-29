@@ -1,6 +1,4 @@
-use crate::commands::ctx::CommandCtx;
-use crate::errors::*;
-use crate::module::*;
+use crate::ctx::CommandCtx;
 use derive_setters::*;
 use futures::*;
 use futures::future::BoxFuture;
@@ -10,6 +8,8 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use sylphie_core::errors::*;
+use sylphie_core::module::*;
 
 /// The metadata relating to a command.
 #[derive(Debug, Setters)]
@@ -150,9 +150,13 @@ struct ConstructWrapperEvent<C: CommandImpl>(Option<C>);
 simple_event!([C: CommandImpl] ConstructWrapperEvent<C>, Option<Box<dyn CommandImplWrapper>>);
 
 #[derive(Events)]
-pub(crate) struct CommandImplConstructor<E: Events>(pub PhantomData<E>);
+pub(crate) struct CommandImplConstructor<E: Events>(PhantomData<E>);
 #[events_impl]
 impl <E: Events> CommandImplConstructor<E> {
+    pub fn new() -> Self {
+        CommandImplConstructor(PhantomData)
+    }
+
     #[event_handler]
     fn construct_wrapper<C: CommandImpl>(
         ev: &mut ConstructWrapperEvent<C>, state: &mut Option<Box<dyn CommandImplWrapper>>,

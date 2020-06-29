@@ -17,13 +17,13 @@ pub(crate) struct CratePaths {
 fn crate_paths_for_core() -> CratePaths {
     CratePaths {
         core: quote! { ::sylphie_core },
-        commands: quote! { ::sylphie_core::commands }
+        commands: quote! { ::sylphie_commands }
     }
 }
 fn crate_paths_for_core_internal() -> CratePaths {
     CratePaths {
         core: quote! { crate },
-        commands: quote! { crate::commands },
+        commands: quote! { __CANNOT_USE_COMMANDS_IN_CORE_INTERNAL__ },
     }
 }
 

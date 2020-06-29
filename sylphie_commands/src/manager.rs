@@ -1,11 +1,10 @@
 use arc_swap::ArcSwapOption;
-use crate::commands::commands::Command;
-use crate::commands::ctx::CommandCtx;
-use crate::errors::*;
+use crate::commands::Command;
+use crate::ctx::CommandCtx;
 use fxhash::{FxHashMap, FxHashSet};
 use static_events::prelude_async::*;
 use std::sync::Arc;
-
+use sylphie_core::errors::*;
 
 /// The event used to register commands.
 #[derive(Debug, Default)]

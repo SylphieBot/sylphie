@@ -1,10 +1,13 @@
-// TODO: Factor commands out into its own crate.
+#[macro_use] extern crate tracing;
 
 pub mod args;
 pub mod commands;
 pub mod ctx;
 pub mod manager;
+mod module;
 mod raw_args;
+
+pub use module::CommandsModule;
 
 /// Reexports of various types for macros. Not public API.
 #[doc(hidden)]
@@ -16,12 +19,12 @@ pub mod __macro_export {
 /// Various utility functions and types for macros. Not public API.
 #[doc(hidden)]
 pub mod __macro_priv {
-    use crate::commands::commands::Command;
-    use crate::commands::ctx::CommandCtx;
-    use crate::errors::*;
-    use crate::module::ModuleId;
+    use crate::commands::Command;
+    use crate::ctx::CommandCtx;
     use static_events::prelude_async::*;
     use std::marker::PhantomData;
+    use sylphie_core::*;
+    use sylphie_core::module::ModuleId;
 
     pub struct ExecuteCommand<T, E: Events> {
         pub mod_id: ModuleId,

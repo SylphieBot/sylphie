@@ -1,7 +1,7 @@
-use crate::commands::commands::Command;
-use crate::commands::ctx::{CommandArg, CommandCtx};
-use crate::errors::*;
+use crate::commands::Command;
+use crate::ctx::{CommandArg, CommandCtx};
 use static_events::prelude_async::*;
+use sylphie_core::errors::*;
 
 /// A helper type for parsing the arguments to command functions.
 pub struct ArgsParserCtx<'a, E: Events> {

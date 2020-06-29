@@ -1,5 +1,3 @@
-use crate::commands::commands::CommandImplConstructor;
-use crate::commands::manager::CommandManager;
 use crate::database::*;
 use crate::errors::*;
 use crate::interface::*;
@@ -87,12 +85,10 @@ simple_event!(ShutdownStartedEvent);
 pub struct SylphieEvents<R: Module> {
     #[subhandler] root_module: R,
     #[subhandler] events: events::SylphieEventsImpl<R>,
-    #[subhandler] command_constructor: CommandImplConstructor<SylphieEvents<R>>,
     #[service] module_manager: ModuleManager,
     #[service] interface: Interface,
     #[service] database: Database,
     #[service] core_ref: CoreRef<R>,
-    #[service] cmd_manager: CommandManager,
 }
 
 /// A handle that allows operations to be performed on the bot outside the events loop.
@@ -189,7 +185,7 @@ impl <R: Module> SylphieCore<R> {
         let _lock = self.lock()?;
 
         // initializes the tokio runtime
-        let mut runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
+        let runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
         runtime.enter(move || -> Result<()> {
             let handle = tokio::runtime::Handle::current();
 
@@ -209,12 +205,10 @@ impl <R: Module> SylphieCore<R> {
             self.events.activate_handle(SylphieEvents {
                 root_module,
                 events: events::SylphieEventsImpl(PhantomData),
-                command_constructor: CommandImplConstructor(PhantomData),
                 module_manager,
                 interface: interface.clone(),
                 database: self.init_db().internal_err(|| "Could not initialize database.")?,
                 core_ref: CoreRef(self.events.clone()),
-                cmd_manager: CommandManager::new(),
             });
             handle.block_on(self.events.lock().dispatch_async(InitEvent));
             interface.start(&self.events.lock())?;

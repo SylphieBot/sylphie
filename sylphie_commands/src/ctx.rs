@@ -1,11 +1,11 @@
-use crate::commands::raw_args::*;
-use crate::core::{SylphieEvents, CoreRef};
-use crate::errors::*;
-use crate::module::Module;
+use crate::raw_args::*;
 use futures::future::BoxFuture;
 use static_events::prelude_async::*;
 use std::any::Any;
 use std::sync::Arc;
+use sylphie_core::core::{SylphieEvents, CoreRef};
+use sylphie_core::errors::*;
+use sylphie_core::module::Module;
 
 /// The implementation of a command context.
 pub trait CommandCtxImpl: Sync + Send + 'static {

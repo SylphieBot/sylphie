@@ -200,8 +200,8 @@ fn derive_module(
                 &mut self.#info_field
             }
 
-            fn init_module<R: #core::module::Module>(
-                __mod_core: #core::core::CoreRef<R>,
+            fn init_module<__RootModule: #core::module::Module>(
+                __mod_core: #core::core::CoreRef<__RootModule>,
                 __mod_parent: &str,
                 __mod_walker: &mut #core::module::ModuleTreeWalker,
             ) -> Self {

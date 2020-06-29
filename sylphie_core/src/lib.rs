@@ -1,13 +1,11 @@
 #![feature(specialization)]
 #![deny(unused_must_use)]
 
-// TODO: Properly scope our macros using the local use trick.
 // TODO: Remove the minnie_errors dependency and add a mechanism to hook error reports.
 
 #[macro_use] extern crate tracing;
-#[macro_use] pub mod errors;
+pub mod errors; // this goes before to make sure macros resolve
 
-pub mod commands;
 pub mod core;
 pub mod database;
 pub mod interface;
@@ -46,10 +44,10 @@ pub mod __macro_priv {
 
 /// A convenience module containing common imports that are useful throughout Sylphie-based code.
 pub mod prelude {
-    pub use crate::{cmd_error, bail, ensure};
     pub use crate::core::{SylphieCore, SylphieHandlerExt, CoreRef};
     pub use crate::derives::*;
     pub use crate::errors::{Error, ErrorKind, ErrorFromContextExt, Result};
+    pub use crate::errors::{cmd_error, bail, ensure};
     pub use crate::module::{Module, ModuleInfo};
     pub use static_events::prelude_async::{Handler, Events};
     pub use static_events::prelude_async::{EventResult, EvOk, EvCancel, EvCancelStage};
