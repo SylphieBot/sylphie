@@ -20,7 +20,7 @@ pub mod __macro_priv {
     use crate::commands::ctx::CommandCtx;
     use crate::errors::*;
     use crate::module::ModuleId;
-    use static_events::*;
+    use static_events::prelude_async::*;
     use std::marker::PhantomData;
 
     pub struct ExecuteCommand<T, E: Events> {

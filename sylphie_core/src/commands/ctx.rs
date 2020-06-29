@@ -3,7 +3,7 @@ use crate::core::{SylphieEvents, CoreRef};
 use crate::errors::*;
 use crate::module::Module;
 use futures::future::BoxFuture;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::any::Any;
 use std::sync::Arc;
 

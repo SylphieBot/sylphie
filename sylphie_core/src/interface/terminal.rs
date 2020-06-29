@@ -3,7 +3,7 @@ use crate::interface::InterfaceShared;
 use linefeed::{
     Interface as LinefeedInterface, DefaultTerminal, Signal, ReadResult, Writer,
 };
-use static_events::*;
+use static_events::prelude_async::*;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::*;

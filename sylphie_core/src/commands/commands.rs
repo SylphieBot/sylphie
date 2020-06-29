@@ -4,7 +4,7 @@ use crate::module::*;
 use derive_setters::*;
 use futures::*;
 use futures::future::BoxFuture;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::any::Any;
 use std::borrow::Cow;
 use std::fmt;
@@ -75,7 +75,7 @@ impl Command {
     fn construct_wrapper<E: Events>(
         target: &Handler<E>, command: impl CommandImpl,
     ) -> Box<dyn CommandImplWrapper> {
-        target.dispatch(ConstructWrapperEvent(Some(command)))
+        target.dispatch_sync(ConstructWrapperEvent(Some(command)))
             .expect("`Command`s may only be constructed in `SylphieCore`s.")
     }
     fn new_0(

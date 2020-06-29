@@ -1,7 +1,7 @@
 use crate::errors::*;
 use r2d2::{Pool, ManageConnection, PooledConnection};
 use rusqlite::{Connection, OpenFlags, Result as RusqliteResult, Error as RusqliteError};
-use static_events::*;
+use static_events::prelude_async::*;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::time;

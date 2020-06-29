@@ -76,7 +76,7 @@ fn create_command_handler(
 ) -> Result<()> {
     let core = &paths.core;
     let commands = &paths.commands;
-    let static_events = quote! { #core::__macro_export::static_events };
+    let static_events = quote! { #core::__macro_export::static_events::prelude_async };
 
     if !method.sig.generics.params.is_empty() {
         return Err(Error::new(
@@ -199,8 +199,7 @@ pub(crate) fn derive_impl(paths: &CratePaths, input: TokenStream) -> Result<Toke
     let mut input: ItemImpl = parse(input)?;
 
     let mut events = EventsImplAttr::new(
-        &mut input,
-        Some(quote! { ::sylphie_core::__macro_export::static_events }),
+        &mut input, Some(quote! { ::sylphie_core::__macro_export::static_events }), true,
     )?;
     events.set_discriminator(quote! { ::sylphie_core::__macro_priv::ModuleImplPhase });
     process_items(paths, &mut events, &mut input)?;

@@ -5,7 +5,7 @@ use crate::errors::*;
 use crate::module::CrateMetadata;
 use crate::utils::InstanceScopeGuard;
 use parking_lot::Mutex;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

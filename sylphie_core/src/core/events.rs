@@ -6,7 +6,7 @@ use crate::interface::{TerminalCommandEvent, Interface};
 use crate::module::Module;
 use futures::*;
 use futures::future::BoxFuture;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::marker::PhantomData;
 
 #[derive(Events)]

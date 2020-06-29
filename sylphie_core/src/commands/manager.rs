@@ -3,7 +3,7 @@ use crate::commands::commands::Command;
 use crate::commands::ctx::CommandCtx;
 use crate::errors::*;
 use fxhash::{FxHashMap, FxHashSet};
-use static_events::*;
+use static_events::prelude_async::*;
 use std::sync::Arc;
 
 // TODO: Case-insensitive command lookup.

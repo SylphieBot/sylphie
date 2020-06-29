@@ -3,7 +3,7 @@ use crate::errors::*;
 use crate::interface::InterfaceShared;
 use crate::interface::terminal::Terminal;
 use parking_lot::Once;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::fmt::{Result as FmtResult, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -103,7 +103,7 @@ fn make_logger(
 ) -> Result<LockingSubscriber> {
     let log_path = log_path(shared)?;
 
-    let ev = core.dispatch(SetupLoggerEvent {
+    let ev = core.dispatch_sync(SetupLoggerEvent {
         console: tracing_subscriber::EnvFilter::new("info"),
     });
 

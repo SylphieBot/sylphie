@@ -7,7 +7,7 @@ use crate::module::{Module, ModuleManager};
 use crate::utils::GlobalInstance;
 use fs2::*;
 use lazy_static::*;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -188,8 +188,10 @@ impl <R: Module> SylphieCore<R> {
         let _lock = self.lock()?;
 
         // initializes the tokio runtime
-        let runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
+        let mut runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
         runtime.enter(move || -> Result<()> {
+            let handle = tokio::runtime::Handle::current();
+
             // initialize the interface system
             let interface_info = InterfaceInfo {
                 bot_name: self.bot_name.clone(),
@@ -213,9 +215,9 @@ impl <R: Module> SylphieCore<R> {
                 core_ref: CoreRef(self.events.clone()),
                 cmd_manager: CommandManager::new(),
             });
-            self.events.lock().dispatch(InitEvent);
+            handle.block_on(self.events.lock().dispatch_async(InitEvent));
             interface.start(&self.events.lock())?;
-            self.events.lock().dispatch(ShutdownEvent);
+            handle.block_on(self.events.lock().dispatch_async(ShutdownEvent));
             self.events.shutdown(); // TODO: shutdown with progress
 
             Ok(())
@@ -239,7 +241,7 @@ pub trait SylphieHandlerExt {
 }
 impl <E: Events> SylphieHandlerExt for Handler<E> {
     fn shutdown_bot(&self) {
-        self.dispatch(ShutdownStartedEvent);
+        self.dispatch_sync(ShutdownStartedEvent);
     }
 
     fn connect_db(&self) -> Result<DatabaseConnection> {

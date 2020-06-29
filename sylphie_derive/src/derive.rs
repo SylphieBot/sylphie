@@ -223,7 +223,7 @@ pub(crate) fn derive_events(paths: &CratePaths, input: TokenStream) -> Result<To
 
     let core = &paths.core;
     let mut events = DeriveStaticEvents::new(
-        &input, Some(quote! { #core::__macro_export::static_events }),
+        &input, Some(quote! { #core::__macro_export::static_events }), true,
     )?;
     events.add_discriminator(parse2(quote! { #core::__macro_priv::ModuleImplPhase })?);
     let events_impl = events.generate();

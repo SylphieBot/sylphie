@@ -1,6 +1,6 @@
 use crate::core::CoreRef;
 use enumset::*;
-use static_events::*;
+use static_events::prelude_async::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

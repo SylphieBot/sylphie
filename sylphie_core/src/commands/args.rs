@@ -1,7 +1,7 @@
 use crate::commands::commands::Command;
 use crate::commands::ctx::{CommandArg, CommandCtx};
 use crate::errors::*;
-use static_events::*;
+use static_events::prelude_async::*;
 
 /// A helper type for parsing the arguments to command functions.
 pub struct ArgsParserCtx<'a, E: Events> {

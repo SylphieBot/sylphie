@@ -1,4 +1,4 @@
-use static_events::*;
+use static_events::prelude_async::*;
 use sylphie_core::prelude::*;
 use sylphie_core::commands::ctx::CommandCtx;
 

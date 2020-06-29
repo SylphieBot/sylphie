@@ -51,9 +51,9 @@ pub mod prelude {
     pub use crate::derives::*;
     pub use crate::errors::{Error, ErrorKind, ErrorFromContextExt, Result};
     pub use crate::module::{Module, ModuleInfo};
-    pub use static_events::{Handler, Events};
-    pub use static_events::{EventResult, EvOk, EvCancel, EvCancelStage};
-    pub use static_events::{EvCheck, EvInit, EvBeforeEvent, EvOnEvent, EvAfterEvent};
+    pub use static_events::prelude_async::{Handler, Events};
+    pub use static_events::prelude_async::{EventResult, EvOk, EvCancel, EvCancelStage};
+    pub use static_events::prelude_async::{EvCheck, EvInit, EvBeforeEvent, EvOnEvent, EvAfterEvent};
     pub use std::result::{Result as StdResult};
 }
 
@@ -64,5 +64,5 @@ pub mod derives {
         module_impl_core as module_impl,
         command,
     };
-    #[doc(inline)] pub use static_events::event_handler;
+    #[doc(inline)] pub use static_events::handlers::event_handler;
 }
