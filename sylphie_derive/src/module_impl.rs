@@ -79,9 +79,10 @@ fn create_command_handler(
     let static_events = quote! { #core::__macro_export::static_events::prelude_async };
 
     if !method.sig.generics.params.is_empty() {
-        return Err(Error::new(
-            method.sig.generics.span(), "#[command] methods may not be generic.",
-        ));
+        error(method.sig.generics.span(), "#[command] methods may not be generic.")?;
+    }
+    if !method.sig.asyncness.is_some() {
+        error(method.sig.generics.span(), "#[command] methods must be async.")?;
     }
 
     let name_str = method.sig.ident.to_string();
@@ -94,7 +95,6 @@ fn create_command_handler(
     });
     let command_info = quote! { #commands::commands::CommandInfo::new(#cmd_name) };
 
-    // TODO: Assert the command is async correctly.
     // TODO: Support commands without a self parameter.
     let ev_call = &method.sig.ident;
     let mut ev_call_params = Vec::new();
