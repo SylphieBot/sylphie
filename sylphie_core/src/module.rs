@@ -168,7 +168,7 @@ impl ModuleManager {
         manager.compute_source_crates();
         (manager, root)
     }
-    pub(crate) fn modules_list(&self) -> Arc<[CrateMetadata]> {
+    pub(crate) fn loaded_crates_list(&self) -> Arc<[CrateMetadata]> {
         self.source_crates.clone()
     }
 
@@ -183,5 +183,10 @@ impl ModuleManager {
     /// Returns the metadata for a given module by name, if one exists.
     pub fn find_module(&self, name: &str) -> Option<&ModuleInfo> {
         self.name_to_id.get(name).map(|x| self.get_module(*x))
+    }
+
+    /// Returns a list of all loaded modules.
+    pub fn loaded_modules(&self) -> &[ModuleInfo] {
+        &self.module_info
     }
 }

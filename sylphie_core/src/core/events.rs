@@ -1,9 +1,8 @@
 use crate::core::{ShutdownStartedEvent, SylphieHandlerExt};
 use crate::interface::{TerminalCommandEvent, Interface, SetupLoggerEvent};
-use crate::module::Module;
+use crate::module::{Module, ModuleManager};
 use static_events::prelude_async::*;
 use std::marker::PhantomData;
-use tracing_subscriber::filter::Directive;
 
 #[derive(Events)]
 pub struct SylphieEventsImpl<R: Module>(pub PhantomData<R>);
@@ -23,6 +22,10 @@ impl <R: Module> SylphieEventsImpl<R> {
                 info!(target: "[term]", ".abort!! - Forcefully shuts down the bot.");
             }
             ".info" => {
+                info!(target: "[term]", "Loaded modules:");
+                for module in target.get_service::<ModuleManager>().loaded_modules() {
+                    info!(target: "[term]", "    {}", module.name());
+                }
                 for info_line in crate::interface::get_info_string().trim().split('\n') {
                     info!(target: "[term]", "{}", info_line);
                 }

@@ -22,13 +22,13 @@ macro_rules! sylphie_root_module {
             #[module_info] info: $crate::module::ModuleInfo,
 
             #[submodule]
-            __wrapper_marker_module: $crate::__macro_export::WrapperModule,
-            #[submodule]
             commands: $crate::__macro_export::sylphie_commands::CommandsModule<$mod_name>,
             $(
                 #[submodule] $(#[$meta])*
                 $name: $ty,
             )*
+            #[submodule]
+            __sylphie_marker__: $crate::__macro_export::WrapperModule,
         }
     };
 }

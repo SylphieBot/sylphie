@@ -200,7 +200,7 @@ impl <R: Module> SylphieCore<R> {
             // initialize the module tree
             let (module_manager, root_module) =
                 ModuleManager::init(CoreRef(self.events.clone()));
-            interface.set_loaded_crates(module_manager.modules_list());
+            interface.set_loaded_crates(module_manager.loaded_crates_list());
 
             self.events.activate_handle(SylphieEvents {
                 root_module,
