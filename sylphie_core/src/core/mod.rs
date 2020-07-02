@@ -10,6 +10,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::marker::PhantomData;
+use std::thread;
 use std::time::Duration;
 
 mod events;
@@ -88,37 +89,6 @@ pub struct SylphieEvents<R: Module> {
     #[service] module_manager: ModuleManager,
     #[service] interface: Interface,
     #[service] database: Database,
-    #[service] core_ref: CoreRef<R>,
-}
-
-/// A handle that allows operations to be performed on the bot outside the events loop.
-pub struct CoreRef<R: Module>(EventsHandle<SylphieEvents<R>>);
-impl <R: Module> CoreRef<R> {
-    // Gets whether the bot has been shut down.
-    pub fn is_shutdown(&self) -> bool {
-        self.0.is_shutdown()
-    }
-
-    /// Gets the number of active handlers from this handle, or handles cloned from it.
-    pub fn lock_count(&self) -> usize {
-        self.0.lock_count()
-    }
-
-    /// Returns the underlying [`Handler`], or panics if the bot has already been shut down.
-    pub fn lock(&self) -> Handler<SylphieEvents<R>> {
-        self.0.lock()
-    }
-
-    /// Returns the underlying [`Handler`] wrapped in a [`Some`], or [`None`] if the bot has
-    /// already been shut down.
-    pub fn try_lock(&self) -> Option<Handler<SylphieEvents<R>>> {
-        self.0.try_lock()
-    }
-}
-impl <R: Module> Clone for CoreRef<R> {
-    fn clone(&self) -> Self {
-        CoreRef(self.0.clone())
-    }
 }
 
 lazy_static! {
@@ -128,14 +98,14 @@ lazy_static! {
 pub struct SylphieCore<R: Module> {
     bot_name: String,
     root_path: PathBuf,
-    events: EventsHandle<SylphieEvents<R>>,
+    phantom: PhantomData<R>,
 }
 impl <R: Module> SylphieCore<R> {
     pub fn new(bot_name: impl Into<String>) -> Self {
         SylphieCore {
             bot_name: bot_name.into(),
             root_path: get_root_path(),
-            events: EventsHandle::new(),
+            phantom: PhantomData,
         }
     }
 
@@ -187,7 +157,7 @@ impl <R: Module> SylphieCore<R> {
         // initializes the tokio runtime
         let runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
         runtime.enter(move || -> Result<()> {
-            let handle = tokio::runtime::Handle::current();
+            let runtime = tokio::runtime::Handle::current();
 
             // initialize the interface system
             let interface_info = InterfaceInfo {
@@ -197,42 +167,41 @@ impl <R: Module> SylphieCore<R> {
             let interface = Interface::new(interface_info)
                 .internal_err(|| "Could not initialize user interface.")?;
 
-            // initialize the module tree
-            let (module_manager, root_module) =
-                ModuleManager::init(CoreRef(self.events.clone()));
+            // initialize the module tree and events dispatch
+            let (module_manager, root_module) = ModuleManager::init::<R>();
             interface.set_loaded_crates(module_manager.loaded_crates_list());
-
-            self.events.activate_handle(SylphieEvents {
+            let handler = Handler::new(SylphieEvents {
                 root_module,
                 events: events::SylphieEventsImpl(PhantomData),
                 module_manager,
                 interface: interface.clone(),
                 database: self.init_db().internal_err(|| "Could not initialize database.")?,
-                core_ref: CoreRef(self.events.clone()),
             });
-            handle.block_on(self.events.lock().dispatch_async(InitEvent));
-            interface.start(&self.events.lock())?;
-            handle.block_on(self.events.lock().dispatch_async(ShutdownEvent));
 
+            // start the actual bot itself
+            runtime.block_on(handler.dispatch_async(InitEvent));
+            interface.start(&handler)?;
+            runtime.block_on(handler.dispatch_async(ShutdownEvent));
+
+            // wait for shutdown
             let mut ct = 0;
-            self.events.shutdown_with_progress(Duration::from_secs(1), || {
-                if ct % 5 == 1 {
+            while handler.refcount() > 1 {
+                if (ct % 500) == 100 {
                     info!(
                         "Waiting on {} threads to stop. Press {}+C to force shutdown.",
-                        self.events.lock_count(),
+                        handler.refcount() - 1,
                         if env!("TARGET").contains("apple-darwin") { "Command" } else { "Ctrl" },
                     );
                 }
                 ct += 1;
-            });
+                thread::sleep(Duration::from_millis(10));
+            }
 
             Ok(())
         })?;
         Ok(())
     }
 }
-
-pub struct SylphieHandlerExtCore<'a, E: Events>(&'a Handler<E>);
 
 /// Contains extension functions defined directly on `Handler<impl Events>`.
 ///

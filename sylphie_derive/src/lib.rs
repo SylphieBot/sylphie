@@ -35,19 +35,19 @@ fn crate_paths_for_core_internal() -> CratePaths {
 
 // Note that we explicitly handle any attributes that are part of Events.
 #[proc_macro_derive(SylphieModule, attributes(
-    module, submodule, subhandler, service, module_info, init_with, core_ref,
+    module, submodule, subhandler, service, module_info, init_with,
 ))]
 pub fn derive_module_sylphie(input: TokenStream) -> TokenStream {
     try_syn!(derive::derive_events(&crate_paths_for_sylphie(), input))
 }
 #[proc_macro_derive(CoreModule, attributes(
-    module, submodule, subhandler, service, module_info, init_with, core_ref,
+    module, submodule, subhandler, service, module_info, init_with,
 ))]
 pub fn derive_module_core(input: TokenStream) -> TokenStream {
     try_syn!(derive::derive_events(&crate_paths_for_core(), input))
 }
 #[proc_macro_derive(CoreInternalModule, attributes(
-    module, submodule, subhandler, service, module_info, init_with, core_ref,
+    module, submodule, subhandler, service, module_info, init_with,
 ))]
 pub fn derive_module_core_internal(input: TokenStream) -> TokenStream {
     try_syn!(derive::derive_events(&crate_paths_for_core_internal(), input))

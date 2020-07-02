@@ -13,7 +13,6 @@ use quote::*;
 struct FieldAttrs {
     is_module_info: bool,
     is_submodule: bool,
-    is_core_ref: bool,
     init_with: Option<Expr>,
 }
 impl FieldAttrs {
@@ -30,10 +29,6 @@ impl FieldAttrs {
                 },
                 "submodule" if !tp.is_submodule => {
                     tp.is_submodule = true;
-                    exclusive_count += 1;
-                },
-                "core_ref" if !tp.is_core_ref => {
-                    tp.is_core_ref = true;
                     exclusive_count += 1;
                 },
                 "init_with" => {
@@ -53,7 +48,7 @@ impl FieldAttrs {
         if exclusive_count > 1 {
             error(
                 attr_span.unwrap(),
-                "Only one of #[init_with], #[module_info], #[submodule], or #[core_ref] may be \
+                "Only one of #[init_with], #[module_info], or #[submodule], may be \
                  used on one field.",
             )?;
         }
@@ -174,10 +169,8 @@ fn derive_module(
 
             let name = &field.ident;
             fields.push(quote! {
-                __mod_walker.register_module(__mod_core.clone(), __mod_parent, stringify!(#name))
+                __mod_walker.register_module(__mod_parent, stringify!(#name))
             });
-        } else if attrs.is_core_ref {
-            fields.push(quote! { #core::__macro_priv::cast_core_ref(__mod_core.clone()) });
         } else {
             fields.push(quote! { #core::__macro_export::Default::default() });
         }
@@ -200,8 +193,7 @@ fn derive_module(
                 &mut self.#info_field
             }
 
-            fn init_module<__RootModule: #core::module::Module>(
-                __mod_core: #core::core::CoreRef<__RootModule>,
+            fn init_module(
                 __mod_parent: &str,
                 __mod_walker: &mut #core::module::ModuleTreeWalker,
             ) -> Self {

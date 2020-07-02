@@ -39,6 +39,60 @@ pub mod __macro_export {
     pub use sylphie_commands;
     pub use sylphie_core;
 
+    // TODO: Finish
+    #[macro_export]
+    #[doc(hidden)]
+    macro_rules! sylphie_root_module_internal_1ca4e726d55144c384ba6b5bf117e03a {
+        (@is_builtin commands) => { };
+
+        (@check_builtins
+            after: [$($after:tt)*]
+        ) => {
+
+        };
+
+        (@parse
+            name: $mod_name:ident
+            input: [builtin($($builtin:ident),* $(,)?), $($input:tt)*]
+            builtin: [$($module:ident)*]
+            fields: [$($fields:tt)*]
+        ) => {
+            $crate::__macro_export::root_internal! { @parse
+                name: $mod_name
+                input: [$($input)*]
+                builtin: [$($builtin)* $($module)*]
+                fields: [$($fields)*]
+            }
+        };
+        (@parse
+            name: $mod_name:ident
+            input: [$field_name:ident: $field_ty:ty, $($input:tt)*]
+            builtin: [$($module:ident)*]
+            fields: [$($fields:tt)*]
+        ) => {
+            $crate::__macro_export::root_internal! { @parse
+                name: $mod_name
+                input: [$($input)*]
+                builtin: [$($module)*]
+                fields: [$field_name: $field_ty, $($fields)*]
+            }
+        };
+        (@parse
+            name: $mod_name:ident
+            input: [$($input:tt)*]
+            builtin: [$($module:ident)*]
+            fields: [$($field_name:ident: $field_ty:ty,)*]
+        ) => {
+            $crate::__macro_export::root_internal! { @parse
+                name: $mod_name
+                input: [$($input)*]
+                builtin: [$($module)*]
+                fields: [$field_name: $field_ty, $($fields)*]
+            }
+        };
+    }
+    pub use crate::sylphie_root_module_internal_1ca4e726d55144c384ba6b5bf117e03a as root_internal;
+
     use sylphie_derive::CoreModule;
     #[derive(CoreModule)]
     #[module(integral, anonymous)]

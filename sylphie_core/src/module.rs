@@ -1,4 +1,3 @@
-use crate::core::CoreRef;
 use enumset::*;
 use static_events::prelude_async::*;
 use std::collections::{HashMap, HashSet};
@@ -102,14 +101,12 @@ impl <'a> ModuleTreeWalker<'a> {
         self.manager.module_info.push(info.clone());
         self.manager.name_to_id.insert(name, id);
     }
-    pub fn register_module<R: Module, M: Module>(
-        &mut self, core: CoreRef<R>, parent: &str, name: &str,
-    ) -> M {
+    pub fn register_module<M: Module>(&mut self, parent: &str, name: &str) -> M {
         assert_ne!(name, "__root__", "__root__ is a reserved module name.");
         assert!(!name.contains('.'), "Periods are not allowed in module names.");
         let submodule_name =
             if parent.is_empty() { name.to_string() } else { format!("{}.{}", parent, name) };
-        let mut module = M::init_module(core, &submodule_name, self);
+        let mut module = M::init_module(&submodule_name, self);
         let metadata = module.metadata();
         self.init_module(&submodule_name, metadata, module.info_mut());
         module
@@ -122,9 +119,7 @@ pub trait Module: Events + Sized + Send + Sync + 'static {
     fn info(&self) -> &ModuleInfo;
     fn info_mut(&mut self) -> &mut ModuleInfo;
 
-    fn init_module<R: Module>(
-        core: CoreRef<R>, parent: &str, walker: &mut ModuleTreeWalker,
-    ) -> Self;
+    fn init_module(parent: &str, walker: &mut ModuleTreeWalker) -> Self;
 }
 
 #[derive(Debug)]
@@ -151,7 +146,7 @@ impl ModuleManager {
         list.sort();
         self.source_crates = list.into();
     }
-    pub(crate) fn init<R: Module>(core: CoreRef<R>) -> (ModuleManager, R) {
+    pub(crate) fn init<R: Module>() -> (ModuleManager, R) {
         static MODULE_ID_ROOT: AtomicU32 = AtomicU32::new(0);
         let mut manager = ModuleManager {
             module_id_root: MODULE_ID_ROOT.fetch_add(1, Ordering::Relaxed),
@@ -162,7 +157,7 @@ impl ModuleManager {
         let mut walker = ModuleTreeWalker {
             manager: &mut manager,
         };
-        let mut root = R::init_module(core, "", &mut walker);
+        let mut root = R::init_module("", &mut walker);
         let metadata = root.metadata();
         walker.init_module("", metadata, root.info_mut());
         manager.compute_source_crates();

@@ -3,6 +3,8 @@ use crate::ctx::{CommandArg, CommandCtx};
 use static_events::prelude_async::*;
 use sylphie_core::errors::*;
 
+// TODO: Implement Option/Result for variadic functions.
+
 /// A helper type for parsing the arguments to command functions.
 pub struct ArgsParserCtx<'a, E: Events> {
     ctx: &'a CommandCtx<E>,

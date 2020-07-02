@@ -31,7 +31,7 @@ impl <R: Module> CommandsModule<R> {
     async fn run_terminal_command(
         &self, target: &Handler<impl Events>, command: &TerminalCommandEvent,
     ) {
-        let ctx = CommandCtx::new(target.get_service::<CoreRef<R>>(), TerminalContext {
+        let ctx = CommandCtx::new(target, TerminalContext {
             raw_message: command.0.clone(),
         });
         if let Err(e) = target.get_service::<CommandManager>().execute(&ctx).await {

@@ -3,7 +3,7 @@ use futures::future::BoxFuture;
 use static_events::prelude_async::*;
 use std::any::Any;
 use std::sync::Arc;
-use sylphie_core::core::{SylphieEvents, CoreRef};
+use sylphie_core::core::SylphieEvents;
 use sylphie_core::errors::*;
 use sylphie_core::module::Module;
 
@@ -44,18 +44,17 @@ struct CommandCtxData<E: Events> {
     args: Args,
     ctx_impl: Box<dyn CommandCtxImplWrapper<E>>,
 }
-impl <R: Module> CommandCtx<SylphieEvents<R>> {
+impl <E: Events> CommandCtx<E> {
     /// Creates a new command context given an implementation and a [`Handler`].
-    pub fn new(core: &CoreRef<R>, ctx_impl: impl CommandCtxImpl) -> Self {
+    pub fn new(core: &Handler<E>, ctx_impl: impl CommandCtxImpl) -> Self {
         let args = Args::parse(ctx_impl.args_parsing_options(), ctx_impl.raw_message());
         CommandCtx(Arc::new(CommandCtxData {
-            handle: core.lock(),
+            handle: core.clone(),
             args,
             ctx_impl: Box::new(ctx_impl),
         }))
     }
-}
-impl <E: Events> CommandCtx<E> {
+
     /// Returns the underlying event handler.
     pub fn handler(&self) -> &Handler<E> {
         &self.0.handle
