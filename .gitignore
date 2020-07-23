@@ -5,5 +5,4 @@
 /Cargo.lock
 
 # Private development files
-/db
-/logs
+/run

@@ -48,7 +48,7 @@ impl FieldAttrs {
         if exclusive_count > 1 {
             error(
                 attr_span.unwrap(),
-                "Only one of #[init_with], #[module_info], or #[submodule], may be \
+                "Only one of #[init_with], #[module_info], or #[submodule] may be \
                  used on one field.",
             )?;
         }
@@ -65,6 +65,8 @@ struct ModuleAttrs {
     integral_recursive: bool,
     #[darling(default)]
     anonymous: bool,
+    #[darling(default)]
+    component: bool,
 }
 
 fn git_metadata(paths: &CratePaths) -> std::result::Result<SynTokenStream, GitError> {
@@ -99,16 +101,17 @@ fn module_metadata(paths: &CratePaths, attrs: &ModuleAttrs) -> SynTokenStream {
     if attrs.integral {
         flags.extend(quote! { | #core::module::ModuleFlag::Integral });
     }
-    if attrs.integral_recursive {
+    if attrs.integral_recursive || attrs.component {
         flags.extend(quote! { | #core::module::ModuleFlag::IntegralRecursive });
     }
-    if attrs.anonymous {
+    if attrs.anonymous || attrs.component {
         flags.extend(quote! { | #core::module::ModuleFlag::Anonymous });
     }
     let git_info = match git_metadata(paths) {
         Ok(v) => quote! { #core::__macro_export::Some(#v) },
         _ => quote! { #core::__macro_export::None },
     };
+    // TODO: Try to make this a static/constant?
     quote! {
         #core::module::ModuleMetadata {
             module_path: ::std::module_path!(),
@@ -144,8 +147,11 @@ fn derive_module(
     let mut field_names = Vec::new();
     let mut fields = Vec::new();
     let mut info_field = None;
+    let mut field_checks = Vec::new();
     for field in &mut data.fields {
         let attrs = FieldAttrs::from_attrs(&field.attrs)?;
+        let name = &field.ident;
+        let ty = &field.ty;
 
         if attrs.is_module_info {
             if info_field.is_some() {
@@ -167,17 +173,30 @@ fn derive_module(
                 tokens: Default::default(),
             });
 
-            let name = &field.ident;
             fields.push(quote! {
                 __mod_walker.register_module(__mod_parent, stringify!(#name))
             });
         } else {
             fields.push(quote! { #core::__macro_export::Default::default() });
         }
+
+        if !attrs.is_submodule {
+            let field_span = field.span();
+            field_checks.push(quote_spanned! { field_span =>
+                let _ = <#ty as #core::__macro_priv::CheckIsComponent<_>>::item;
+            });
+        }
     }
     let info_field = match info_field {
         Some(v) => v,
         _ => error(input_span, "At least one field must be marked with #[module_info].")?,
+    };
+    let impl_is_component = if attrs.component {
+        quote! {
+            impl #bounds #core::__macro_priv::IsComponent for #ident #ty_bounds #where_bounds { }
+        }
+    } else {
+        SynTokenStream::new()
     };
 
     Ok(quote! {
@@ -197,11 +216,13 @@ fn derive_module(
                 __mod_parent: &str,
                 __mod_walker: &mut #core::module::ModuleTreeWalker,
             ) -> Self {
+                #(#field_checks)*
                 #ident {
                     #(#field_names: #fields,)*
                 }
             }
         }
+        #impl_is_component
     })
 }
 

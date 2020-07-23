@@ -1,4 +1,4 @@
-use crate::core::{ShutdownStartedEvent, SylphieHandlerExt};
+use crate::core::{ShutdownStartedEvent, SylphieCoreHandlerExt};
 use crate::interface::{TerminalCommandEvent, Interface, SetupLoggerEvent};
 use crate::module::{Module, ModuleManager};
 use static_events::prelude_async::*;

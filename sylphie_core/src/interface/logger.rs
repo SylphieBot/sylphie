@@ -79,7 +79,7 @@ impl SetupLoggerEvent {
     pub fn add_console_directive(&mut self, directive: &str) {
         let directive = match Directive::from_str(directive) {
             Ok(x) => x,
-            Err(e) => {
+            Err(_) => {
                 error!("Failed to parse logging directive: {}", directive);
                 return
             }

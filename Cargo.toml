@@ -3,6 +3,7 @@ members = [
     "sylphie",
     "sylphie_commands",
     "sylphie_core",
+    "sylphie_database",
     "sylphie_derive",
 ]
 

@@ -171,6 +171,11 @@ impl fmt::Display for Error {
 /// An [`Error`] wrapped in a [`std::error::Error`]
 pub struct ErrorWrapper(Error);
 impl ErrorWrapper {
+    /// Wraps something that can be converted into an [`Error`] into a std error.
+    pub fn new(from: impl Into<Error>) -> Self {
+        ErrorWrapper(from.into())
+    }
+
     pub fn into_inner(self) -> Error {
         self.0
     }

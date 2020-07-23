@@ -17,6 +17,7 @@ mod terminal;
 pub use logger::SetupLoggerEvent;
 pub use terminal::TerminalCommandEvent;
 
+// TODO: Replace with BotInfo
 pub(crate) struct InterfaceInfo {
     pub bot_name: String,
     pub root_path: PathBuf,

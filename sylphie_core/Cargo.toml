@@ -18,8 +18,6 @@ lazy_static = "1.4.0"
 linefeed = "0.6.0"
 minnie_errors = { version = "0.1.0", git = "https://github.com/SylphieBot/minnie.git" }
 parking_lot = { version = "0.11.0", features = ["deadlock_detection"] }
-r2d2 = "0.8.5"
-rusqlite = "0.23.0"
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
 thiserror = "1.0.19"
 tokio = { version = "0.2.21", features = ["full"] }

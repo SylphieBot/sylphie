@@ -2,6 +2,7 @@ pub use sylphie_core::core;
 pub use sylphie_core::database;
 pub use sylphie_core::errors;
 pub use sylphie_core::interface;
+pub use sylphie_core::timer;
 pub use sylphie_core::module;
 
 pub mod commands {

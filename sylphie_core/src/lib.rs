@@ -7,9 +7,9 @@
 pub mod errors; // this goes before to make sure macros resolve
 
 pub mod core;
-pub mod database;
 pub mod interface;
 pub mod module;
+pub mod timer;
 mod utils;
 
 pub use crate::core::SylphieCore;
@@ -26,22 +26,26 @@ pub mod __macro_export {
 /// Various utility functions and types for macros. Not public API.
 #[doc(hidden)]
 pub mod __macro_priv {
-    use crate::prelude::*;
-    use std::any::TypeId;
-
     /// The phase for `#[module_impl]`.
     pub enum ModuleImplPhase { }
+
+    // Helps statically check that `#[module(component)]` modules are properly registered.
+    pub trait IsComponent { }
+    pub struct ThisTypeMustBeUsedAsASubmodule;
+    pub trait CheckIsComponent<T> {
+        fn item(_: ThisTypeMustBeUsedAsASubmodule) { todo!() }
+    }
+    impl <T> CheckIsComponent<u32> for T { }
+    impl <T: IsComponent> CheckIsComponent<u64> for T { }
 }
 
 /// A convenience module containing common imports that are useful throughout Sylphie-based code.
 pub mod prelude {
-    pub use crate::core::{SylphieCore, SylphieHandlerExt};
-    pub use crate::errors::{Error, ErrorKind, ErrorFromContextExt, Result};
+    pub use crate::core::{SylphieCore, SylphieCoreHandlerExt};
+    pub use crate::errors::{Error, ErrorKind, ErrorWrapper, ErrorFromContextExt, Result};
     pub use crate::errors::{cmd_error, bail, ensure};
     pub use crate::module::{Module, ModuleInfo};
-    pub use static_events::prelude_async::{Handler, Events};
-    pub use static_events::prelude_async::{EventResult, EvOk, EvCancel, EvCancelStage};
-    pub use static_events::prelude_async::{EvCheck, EvInit, EvBeforeEvent, EvOnEvent, EvAfterEvent};
+    pub use static_events::prelude_async::*;
     pub use std::result::{Result as StdResult};
 }
 
