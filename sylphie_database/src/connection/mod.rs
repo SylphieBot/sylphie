@@ -1,24 +1,17 @@
 use async_trait::*;
-use crate::migrations::MigrationManager;
-use futures::Stream;
-use futures_async_stream::*;
-use rusqlite::{Connection, Transaction, OpenFlags, TransactionBehavior, AndThenRows, Row, Statement, Rows};
+use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::borrow::Cow;
-use std::ops::{Deref, DerefMut, Generator};
-use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::path::{PathBuf, Path};
 use std::time;
 use std::sync::Arc;
-use sylphie_core::core::EarlyInitEvent;
 use sylphie_core::prelude::*;
 use tokio::runtime::Handle;
-use tokio::task;
 
 mod pool;
 use pool::{Pool, ManageConnection, PooledConnection};
-use parking_lot::Mutex;
 
 struct BlockingWrapper<T: Send + 'static> {
     inner: Option<Box<T>>,
@@ -126,7 +119,6 @@ struct DbOpsData {
     is_begin_transaction: bool,
     is_begin_commit: bool,
     is_in_transaction: bool,
-    return_cell: Option<Arc<Mutex<Option<BlockingWrapper<Connection>>>>>,
 }
 impl DbOpsData {
     fn begin_transaction(&mut self, t: TransactionType) -> Result<()> {
@@ -199,51 +191,38 @@ impl DbOpsData {
         Ok(())
     }
 
-    fn do_query_stream<T: DeserializeOwned + Send + 'static>(
-        &mut self,
-        sql: Cow<'static, str>,
-        query: impl for <'a> FnOnce(&'a mut Statement<'_>) -> Result<Rows<'a>> + Send + 'static,
-    ) -> impl Stream<Item = Result<T>> {
-        if self.return_cell.is_none() {
-            self.return_cell = Some(Arc::new(Mutex::new(None)));
-        }
+    fn query_row<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
+    ) -> Result<T> {
+        let data = serde_rusqlite::to_params(params)?;
+        let mut stat = self.conn.get()?.prepare(&sql)?;
+        let mut rows = stat.query_and_then(&data.to_slice(), serde_rusqlite::from_row)?;
+        Ok(rows.next().internal_err(|| "No rows returned from query.")??)
+    }
+    fn query_row_named<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
+    ) -> Result<T> {
+        let data = serde_rusqlite::to_params_named(params)?;
+        let mut stat = self.conn.get()?.prepare(&sql)?;
+        let mut rows = stat.query_and_then_named(&data.to_slice(), serde_rusqlite::from_row)?;
+        Ok(rows.next().internal_err(|| "No rows returned from query.")??)
+    }
 
-        struct QueryGeneratorData {
-            return_cell: Arc<Mutex<Option<BlockingWrapper<Connection>>>>,
-            conn: BlockingWrapper<Connection>,
-        }
-        impl Drop for QueryGeneratorData {
-            fn drop(&mut self) {
-                *self.return_cell.lock() = Some(self.conn.take());
-            }
-        }
-
-        let mut gen_data = QueryGeneratorData {
-            return_cell: self.return_cell.as_ref().unwrap().clone(),
-            conn: self.conn.take(),
-        };
-        let query_generator = static move || {
-            let result: Result<()> = try {
-                let mut stat = gen_data.conn.get()?.prepare(&sql)?;
-                let columns = serde_rusqlite::columns_from_statement(&stat);
-                let mut query = query(&mut stat)?;
-                while let Some(row) = query.next()? {
-                    yield Ok(serde_rusqlite::from_row_with_columns::<T>(&row, &columns)?);
-                }
-            };
-            if let Err(e) = result {
-                yield Err(e);
-            }
-        };
-
-        #[try_stream(ok = T, error = Error)]
-        async fn async_stream<T: DeserializeOwned + Send + 'static>(
-            query_generator: impl Generator<Yield = Result<T>> + Send + 'static
-        ) {
-
-        }
-
-        async_stream(query_generator)
+    fn query_vec<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
+    ) -> Result<Vec<T>> {
+        let data = serde_rusqlite::to_params(params)?;
+        let mut stat = self.conn.get()?.prepare(&sql)?;
+        let mut rows = stat.query_and_then(&data.to_slice(), serde_rusqlite::from_row)?;
+        Ok(rows.collect::<StdResult<Vec<T>, _>>()?)
+    }
+    fn query_vec_named<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
+    ) -> Result<Vec<T>> {
+        let data = serde_rusqlite::to_params_named(params)?;
+        let mut stat = self.conn.get()?.prepare(&sql)?;
+        let mut rows = stat.query_and_then_named(&data.to_slice(), serde_rusqlite::from_row)?;
+        Ok(rows.collect::<StdResult<Vec<T>, _>>()?)
     }
 }
 impl Drop for DbOpsData {
@@ -267,11 +246,6 @@ impl DbOps {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.execute(sql, params)).await
     }
-    /// Executes a SQL query with no parameters.
-    pub async fn execute_nullary(&mut self, sql: impl Into<Cow<'static, str>>) -> Result<usize> {
-        let sql = sql.into();
-        self.0.run_blocking(move |c| c.execute(sql, ())).await
-    }
     /// Executes a SQL query with named parameters.
     pub async fn execute_named(
         &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
@@ -283,6 +257,36 @@ impl DbOps {
     pub async fn execute_batch(&mut self, sql: impl Into<Cow<'static, str>>) -> Result<()> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.execute_batch(sql)).await
+    }
+
+    /// Queries a row of the SQL statements with unnamed parameters.
+    pub async fn query_row<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
+    ) -> Result<T> {
+        let sql = sql.into();
+        self.0.run_blocking(move |c| c.query_row(sql, params)).await
+    }
+    /// Queries a row of the SQL statements with named parameters.
+    pub async fn query_row_named<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
+    ) -> Result<T> {
+        let sql = sql.into();
+        self.0.run_blocking(move |c| c.query_row_named(sql, params)).await
+    }
+
+    /// Queries the results of SQL statements with unnamed parameters.
+    pub async fn query_vec<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
+    ) -> Result<Vec<T>> {
+        let sql = sql.into();
+        self.0.run_blocking(move |c| c.query_vec(sql, params)).await
+    }
+    /// Queries the results of SQL statements with named parameters.
+    pub async fn query_vec_named<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
+    ) -> Result<Vec<T>> {
+        let sql = sql.into();
+        self.0.run_blocking(move |c| c.query_vec_named(sql, params)).await
     }
 }
 
@@ -329,49 +333,6 @@ impl DbConnection {
             ops: DbOps(ops),
         })
     }
-
-    /*
-    /// Queries a row of the SQL statements with no parameters.
-    pub async fn query_row<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
-        self.query_row_0(sql.into(), params).await
-    }
-    async fn query_row_0<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
-        self.conn.run_blocking(move |c| -> Result<T> {
-            let data = serde_rusqlite::to_params(params)?;
-            let mut stat = c.prepare(&sql)?;
-            let mut rows = stat.query_and_then(&data.to_slice(), serde_rusqlite::from_row)?;
-            Ok(rows.next().internal_err(|| "No rows returned from query.")??)
-        }).await
-    }
-
-    /// Queries a row of the SQL statements.
-    pub async fn query_row_nullary<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<Cow<'static, str>>,
-    ) -> Result<T> {
-        self.query_row(sql, ()).await
-    }
-
-    /// Queries a row of the SQL statements with named parameters.
-    pub async fn query_row_named<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
-        self.query_row_0(sql.into(), params).await
-    }
-    async fn query_row_named_0<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
-        self.conn.run_blocking(move |c| -> Result<T> {
-            let data = serde_rusqlite::to_params_named(params)?;
-            let mut stat = c.prepare(&sql)?;
-            let mut rows = stat.query_and_then_named(&data.to_slice(), serde_rusqlite::from_row)?;
-            Ok(rows.next().internal_err(|| "No rows returned from query.")??)
-        }).await
-    }
-    */
 }
 
 pub struct DbTransaction<'a> {
@@ -401,7 +362,7 @@ impl <'a> DbTransaction<'a> {
 }
 impl <'a> Drop for DbTransaction<'a> {
     fn drop(&mut self) {
-        self.ops.0.get().unwrap().rollback_in_drop()
+        self.ops.0.get().unwrap().transaction_dropped()
     }
 }
 
@@ -411,6 +372,17 @@ pub struct Database {
     pool: Arc<Pool<ConnectionManager>>,
 }
 impl Database {
+    pub fn new(path: PathBuf, transient_path: PathBuf) -> Result<Self> {
+        let manager = ConnectionManager::new(path, transient_path)?;
+        let pool = Arc::new(Handle::current().block_on(
+            Pool::builder()
+                .max_size(15)
+                .idle_timeout(Some(time::Duration::from_secs(60 * 5)))
+                .build(manager)
+        )?);
+        Ok(Database { pool: pool.clone() })
+    }
+
     pub async fn connect(&self) -> Result<DbConnection> {
         let mut conn_handle = self.pool.get().await?;
         let conn = conn_handle.take();
@@ -423,43 +395,9 @@ impl Database {
                     is_begin_transaction: false,
                     is_begin_commit: false,
                     is_in_transaction: false,
-                    return_cell: None,
                 })),
                 handle,
             }),
         })
-    }
-}
-
-/// The module that handles database connections and migrations.
-///
-/// This should be a part of the module tree for database connections and migrations to work
-/// correctly.
-#[derive(Events)]
-pub struct DatabaseModule {
-    #[service] database: Database,
-    #[service] migrations: MigrationManager,
-}
-impl DatabaseModule {
-    pub fn new(path: PathBuf, transient_path: PathBuf) -> Result<Self> {
-        let manager = ConnectionManager::new(path, transient_path)?;
-        let pool = Arc::new(Handle::current().block_on(
-            Pool::builder()
-                .max_size(15)
-                .idle_timeout(Some(time::Duration::from_secs(60 * 5)))
-                .build(manager)
-        )?);
-        let database = Database { pool: pool.clone() };
-        Ok(DatabaseModule {
-            database: database.clone(),
-            migrations: MigrationManager::new(database),
-        })
-    }
-}
-#[events_impl]
-impl DatabaseModule {
-    #[event_handler(EvInit)]
-    fn init_database(target: &Handler<impl Events>, _: &EarlyInitEvent) {
-        crate::kvs::init_kvs(target);
     }
 }

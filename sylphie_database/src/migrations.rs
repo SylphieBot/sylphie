@@ -72,9 +72,9 @@ impl MigrationManagerState {
     ) -> Result<()> {
         self.create_migrations_table(conn).await?;
 
-        //let transaction = conn.transaction_with_type(TransactionType::Exclusive)?;
+        let transaction = conn.transaction_with_type(TransactionType::Exclusive).await?;
 
-        //transaction.commit()?;
+        transaction.commit().await?;
 
         Ok(())
     }
