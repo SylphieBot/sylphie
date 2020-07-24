@@ -367,7 +367,6 @@ impl <T, U: private::ErrorContext<T>> ErrorFromContextExt<T> for U {
 /// When used in a command, Sylphie will display the text directly to the user, instead of
 /// showing an generic error message and logging the error to disk.
 #[macro_export]
-#[doc(hidden)]
 macro_rules! cmd_error_493fbda1c52048499126605cd31d3dd3 {
     ($format:expr, $($arg:expr),* $(,)?) => {{
         let text = format!($format, $($arg,)*);
@@ -383,7 +382,6 @@ macro_rules! cmd_error_493fbda1c52048499126605cd31d3dd3 {
 /// Immediately returns with an internal error. The function must return an [`Error`], or a type
 /// that it can be converted to using [`Into`].
 #[macro_export]
-#[doc(hidden)]
 macro_rules! bail_493fbda1c52048499126605cd31d3dd3 {
     ($format:expr, $($arg:expr),* $(,)?) => {
         return $crate::__macro_export::Err($crate::errors::Error::new_with_backtrace(
@@ -400,7 +398,6 @@ macro_rules! bail_493fbda1c52048499126605cd31d3dd3 {
 /// Immediately returns with an internal error if a condition is `false`. The function must
 /// return an [`Error`], or a type that it can be converted to using [`Into`].
 #[macro_export]
-#[doc(hidden)]
 macro_rules! ensure_493fbda1c52048499126605cd31d3dd3 {
     ($check:expr, $($tt:tt)*) => {
         if !$check {

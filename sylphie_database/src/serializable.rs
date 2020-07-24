@@ -25,7 +25,7 @@ pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + '
     const SCHEMA_VERSION: usize;
 
     /// Loads a value from a outdated KVS store
-    fn do_migration(from_version: usize, data: &[u8]) -> Result<Option<Self>> {
+    fn do_migration(_from_version: usize, _data: &[u8]) -> Result<Option<Self>> {
         Ok(None)
     }
 }

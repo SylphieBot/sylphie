@@ -1,8 +1,9 @@
 #[macro_use] extern crate tracing;
 
+pub mod migrations; // this goes early because there are macros we use in here
+
 pub mod connection;
 pub mod kvs;
-pub mod migrations;
 pub mod serializable;
 
 use std::path::PathBuf;

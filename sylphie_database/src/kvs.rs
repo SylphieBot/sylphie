@@ -1,4 +1,5 @@
 use bincode;
+use crate::migrations::*;
 use crate::serializable::*;
 use serde::*;
 use serde::de::DeserializeOwned;

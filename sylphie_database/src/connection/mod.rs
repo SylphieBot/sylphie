@@ -193,19 +193,25 @@ impl DbOpsData {
 
     fn query_row<T: DeserializeOwned + Send + 'static>(
         &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
+    ) -> Result<Option<T>> {
         let data = serde_rusqlite::to_params(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
         let mut rows = stat.query_and_then(&data.to_slice(), serde_rusqlite::from_row)?;
-        Ok(rows.next().internal_err(|| "No rows returned from query.")??)
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
     }
     fn query_row_named<T: DeserializeOwned + Send + 'static>(
         &mut self, sql: Cow<'static, str>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
+    ) -> Result<Option<T>> {
         let data = serde_rusqlite::to_params_named(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
         let mut rows = stat.query_and_then_named(&data.to_slice(), serde_rusqlite::from_row)?;
-        Ok(rows.next().internal_err(|| "No rows returned from query.")??)
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
     }
 
     fn query_vec<T: DeserializeOwned + Send + 'static>(
@@ -213,7 +219,7 @@ impl DbOpsData {
     ) -> Result<Vec<T>> {
         let data = serde_rusqlite::to_params(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
-        let mut rows = stat.query_and_then(&data.to_slice(), serde_rusqlite::from_row)?;
+        let rows = stat.query_and_then(&data.to_slice(), serde_rusqlite::from_row)?;
         Ok(rows.collect::<StdResult<Vec<T>, _>>()?)
     }
     fn query_vec_named<T: DeserializeOwned + Send + 'static>(
@@ -221,7 +227,7 @@ impl DbOpsData {
     ) -> Result<Vec<T>> {
         let data = serde_rusqlite::to_params_named(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
-        let mut rows = stat.query_and_then_named(&data.to_slice(), serde_rusqlite::from_row)?;
+        let rows = stat.query_and_then_named(&data.to_slice(), serde_rusqlite::from_row)?;
         Ok(rows.collect::<StdResult<Vec<T>, _>>()?)
     }
 }
@@ -262,14 +268,14 @@ impl DbOps {
     /// Queries a row of the SQL statements with unnamed parameters.
     pub async fn query_row<T: DeserializeOwned + Send + 'static>(
         &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
+    ) -> Result<Option<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_row(sql, params)).await
     }
     /// Queries a row of the SQL statements with named parameters.
     pub async fn query_row_named<T: DeserializeOwned + Send + 'static>(
         &mut self, sql: impl Into<Cow<'static, str>>, params: impl Serialize + Send + 'static,
-    ) -> Result<T> {
+    ) -> Result<Option<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_row_named(sql, params)).await
     }
@@ -327,10 +333,10 @@ impl DbConnection {
         &mut self, t: TransactionType,
     ) -> Result<DbTransaction<'_>> {
         self.ops.0.run_blocking(move |c| c.begin_transaction(t)).await?;
-        let ops = self.ops.0.take();
+        let ops = DbOps(self.ops.0.take());
         Ok(DbTransaction {
             parent: self,
-            ops: DbOps(ops),
+            ops,
         })
     }
 }
@@ -362,7 +368,8 @@ impl <'a> DbTransaction<'a> {
 }
 impl <'a> Drop for DbTransaction<'a> {
     fn drop(&mut self) {
-        self.ops.0.get().unwrap().transaction_dropped()
+        self.ops.0.get().unwrap().transaction_dropped();
+        self.parent.ops = DbOps(self.ops.0.take());
     }
 }
 
