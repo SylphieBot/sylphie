@@ -18,13 +18,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-struct ThreadName;
-impl fmt::Display for ThreadName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(thread::current().name().unwrap_or("<unknown>"))
-    }
-}
-
 // the type from parking_lot is a Voldemort type
 // this mainly exists so we can have an owned version
 struct DeadlockInfo {
@@ -96,7 +89,7 @@ impl ErrorCtx {
     }
 }
 fn fmt_error(fmt: &mut fmt::Formatter<'_>, e: &Error) -> fmt::Result {
-    write!(fmt, "\nThread '{}' encountered an error: {}\n", ThreadName, e)?;
+    write!(fmt, "\nThread '{}' encountered an error: {}\n", e.backtrace_thread(), e)?;
     let mut current = e.source();
     while let Some(source) = current {
         write!(fmt, "Caused by: {}\n", e)?;
@@ -106,8 +99,8 @@ fn fmt_error(fmt: &mut fmt::Formatter<'_>, e: &Error) -> fmt::Result {
         Some(bt) => write!(fmt, "\n{:?}", bt)?,
         None => write!(fmt, "\n(from catch site)\n{:?}\n\n", Backtrace::new())?,
     }
-    for ctx in e.context_backtraces() {
-        write!(fmt, "\n{:?}", ctx)?;
+    for (thread, ctx) in e.context_backtraces() {
+        write!(fmt, "\n(thread '{}')\n{:?}", thread, ctx)?;
     }
     Ok(())
 }

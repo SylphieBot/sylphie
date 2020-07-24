@@ -39,10 +39,15 @@ pub enum ErrorKind {
     NonSendError(String),
 }
 
+fn thread_name() -> String {
+    std::thread::current().name().unwrap_or("<unknown>").to_string()
+}
+
 struct ErrorData {
     kind: ErrorKind,
+    thread_name: Option<String>,
     backtrace: Option<Backtrace>,
-    ctx_backtraces: Vec<Backtrace>,
+    ctx_backtraces: Vec<(String, Backtrace)>,
     cause: Option<Box<dyn StdError + Send + 'static>>,
 }
 
@@ -57,7 +62,11 @@ impl Error {
     #[inline(never)] #[cold]
     pub fn new(kind: ErrorKind) -> Self {
         Error(Box::new(ErrorData {
-            kind, backtrace: None, ctx_backtraces: Vec::new(), cause: None,
+            kind,
+            thread_name: None,
+            backtrace: None,
+            ctx_backtraces: Vec::new(),
+            cause: None,
         }))
     }
 
@@ -77,19 +86,28 @@ impl Error {
         Error::new(kind).with_backtrace()
     }
 
+    /// Adds a thread name to this error, if none already exists.
+    #[inline(never)] #[cold]
+    pub fn with_thread_name(mut self) -> Self {
+        if self.0.thread_name.is_none() {
+            self.0.thread_name = Some(thread_name());
+        }
+        self
+    }
+
     /// Adds backtrace information to this error, if none already exists.
     #[inline(never)] #[cold]
     pub fn with_backtrace(mut self) -> Self {
-        if !self.backtrace().is_some() {
+        if self.backtrace().is_none() {
             self.0.backtrace = Some(Backtrace::new());
         }
-        self
+        self.with_thread_name()
     }
 
     /// Adds backtrace information to this error, overriding any that may exist.
     #[inline(never)] #[cold]
     pub fn with_context_backtrace(mut self) -> Self {
-        self.0.ctx_backtraces.push(Backtrace::new());
+        self.0.ctx_backtraces.push((thread_name(), Backtrace::new()));
         self
     }
 
@@ -107,6 +125,7 @@ impl Error {
     #[inline(never)] #[cold]
     fn wrap_panic(panic: panic::PanicInfo) -> Error {
         let mut err = Error::new(ErrorKind::Panicked(panic.payload, panic.panic_loc));
+        err.0.thread_name = Some(thread_name());
         err.0.backtrace = Some(panic.backtrace);
         err
     }
@@ -135,6 +154,15 @@ impl Error {
     }
 
     /// Returns the backtrace associated with this error.
+    pub fn backtrace_thread(&self) -> Cow<'_, str> {
+        if let Some(x) = &self.0.thread_name {
+            x.into()
+        } else {
+            thread_name().into()
+        }
+    }
+
+    /// Returns the backtrace associated with this error.
     pub fn backtrace(&self) -> Option<&Backtrace> {
         if let Some(x) = &self.0.backtrace {
             Some(x)
@@ -146,7 +174,7 @@ impl Error {
     }
 
     /// Returns backtraces added as additional context.
-    pub fn context_backtraces(&self) -> &[Backtrace] {
+    pub fn context_backtraces(&self) -> &[(String, Backtrace)] {
         &self.0.ctx_backtraces
     }
 

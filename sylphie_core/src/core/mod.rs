@@ -168,7 +168,6 @@ impl <R: Module> SylphieCore<R> {
         // initializes the tokio runtime
         let runtime = tokio::runtime::Builder::new()
             .threaded_scheduler()
-            .thread_name("sylphie")
             .enable_all()
             .build()?;
         runtime.enter(move || -> Result<()> {
