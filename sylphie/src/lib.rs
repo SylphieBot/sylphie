@@ -1,12 +1,16 @@
 pub use sylphie_core::core;
-pub use sylphie_core::database;
 pub use sylphie_core::errors;
 pub use sylphie_core::interface;
 pub use sylphie_core::timer;
 pub use sylphie_core::module;
+pub use sylphie_core::utils;
 
 pub mod commands {
     pub use sylphie_commands::{commands, ctx, manager};
+}
+
+pub mod database {
+    pub use sylphie_database::{connection, kvs, migrations, serializable};
 }
 
 #[macro_export]
@@ -24,6 +28,9 @@ macro_rules! sylphie_root_module {
 
             #[submodule]
             commands: $crate::__macro_export::sylphie_commands::CommandsModule<$mod_name>,
+            #[subhandler]
+            #[init_with { $crate::__macro_export::new_db() }]
+            database: $crate::__macro_export::sylphie_database::DatabaseModule,
             $(
                 #[submodule] $(#[$meta])*
                 $name: $ty,
@@ -39,6 +46,7 @@ macro_rules! sylphie_root_module {
 pub mod __macro_export {
     pub use sylphie_commands;
     pub use sylphie_core;
+    pub use sylphie_database;
 
     use sylphie_derive::CoreModule;
     #[derive(CoreModule)]
@@ -46,7 +54,12 @@ pub mod __macro_export {
     pub struct WrapperModule {
         #[module_info] info: crate::module::ModuleInfo,
     }
+
+    pub fn new_db() -> sylphie_database::DatabaseModule {
+        sylphie_database::DatabaseModule::new()
+    }
 }
+
 
 /// A convenience module containing common imports that are useful throughout Sylphie-based code.
 pub mod prelude {

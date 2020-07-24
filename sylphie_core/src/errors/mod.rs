@@ -42,6 +42,7 @@ pub enum ErrorKind {
 struct ErrorData {
     kind: ErrorKind,
     backtrace: Option<Backtrace>,
+    ctx_backtraces: Vec<Backtrace>,
     cause: Option<Box<dyn StdError + Send + 'static>>,
 }
 
@@ -56,7 +57,7 @@ impl Error {
     #[inline(never)] #[cold]
     pub fn new(kind: ErrorKind) -> Self {
         Error(Box::new(ErrorData {
-            kind, backtrace: None, cause: None,
+            kind, backtrace: None, ctx_backtraces: Vec::new(), cause: None,
         }))
     }
 
@@ -82,6 +83,13 @@ impl Error {
         if !self.backtrace().is_some() {
             self.0.backtrace = Some(Backtrace::new());
         }
+        self
+    }
+
+    /// Adds backtrace information to this error, overriding any that may exist.
+    #[inline(never)] #[cold]
+    pub fn with_context_backtrace(mut self) -> Self {
+        self.0.ctx_backtraces.push(Backtrace::new());
         self
     }
 
@@ -135,6 +143,11 @@ impl Error {
         } else {
             None
         }
+    }
+
+    /// Returns backtraces added as additional context.
+    pub fn context_backtraces(&self) -> &[Backtrace] {
+        &self.0.ctx_backtraces
     }
 
     /// Gets the source of this error.

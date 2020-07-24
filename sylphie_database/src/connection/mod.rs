@@ -1,3 +1,4 @@
+use arc_swap::*;
 use async_trait::*;
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
@@ -31,7 +32,7 @@ impl <T: Send + 'static> BlockingWrapper<T> {
             (result, inner)
         }).await?;
         self.inner = inner;
-        result
+        result.map_err(|x| x.with_context_backtrace())
     }
     fn get(&mut self) -> Result<&mut T> {
         match &mut self.inner {
@@ -47,19 +48,14 @@ impl <T: Send + 'static> BlockingWrapper<T> {
     }
 }
 
-struct ConnectionManager {
+struct ConnectionPaths {
     db_file: Arc<Path>,
     transient_db_file: Arc<Path>,
-    handle: Arc<Handle>,
 }
-impl ConnectionManager {
-    fn new(path: PathBuf, transient_path: PathBuf) -> Result<ConnectionManager> {
-        Ok(ConnectionManager {
-            db_file: path.into(),
-            transient_db_file: transient_path.into(),
-            handle: Arc::new(Handle::current()),
-        })
-    }
+
+struct ConnectionManager {
+    paths: Arc<ArcSwapOption<ConnectionPaths>>,
+    handle: Arc<Handle>,
 }
 #[async_trait]
 impl ManageConnection for ConnectionManager {
@@ -67,8 +63,10 @@ impl ManageConnection for ConnectionManager {
     type Error = ErrorWrapper;
 
     async fn connect(&self) -> StdResult<BlockingWrapper<Connection>, ErrorWrapper> {
-        let db_file = self.db_file.clone();
-        let transient_db_file = self.transient_db_file.clone();
+        let paths = self.paths.load();
+        let paths = paths.as_ref().expect("Paths not set in database?");
+        let db_file = paths.db_file.clone();
+        let transient_db_file = paths.transient_db_file.clone();
         let handle = self.handle.clone();
         Ok(self.handle.spawn_blocking(move || -> Result<_> {
             let conn = Connection::open_with_flags(&db_file,
@@ -119,6 +117,7 @@ struct DbOpsData {
     is_begin_transaction: bool,
     is_begin_commit: bool,
     is_in_transaction: bool,
+    is_dead: bool,
 }
 impl DbOpsData {
     fn begin_transaction(&mut self, t: TransactionType) -> Result<()> {
@@ -154,6 +153,8 @@ impl DbOpsData {
         Ok(())
     }
     fn rollback_in_drop(&mut self) {
+        self.is_dead = true;
+
         // rollback the transaction in a blocking thread. The connection will only be returned
         // to the pool once this is done.
         //
@@ -233,7 +234,9 @@ impl DbOpsData {
 }
 impl Drop for DbOpsData {
     fn drop(&mut self) {
-        if self.is_begin_commit || self.is_begin_transaction {
+        if self.is_dead {
+            // rip
+        } else if self.is_begin_commit || self.is_begin_transaction {
             self.conn_handle.as_mut().unwrap().take();
         } else if self.is_in_transaction {
             self.rollback_in_drop()
@@ -376,18 +379,33 @@ impl <'a> Drop for DbTransaction<'a> {
 /// Manages connections to the database.
 #[derive(Clone)]
 pub struct Database {
+    paths: Arc<ArcSwapOption<ConnectionPaths>>,
     pool: Arc<Pool<ConnectionManager>>,
 }
 impl Database {
-    pub fn new(path: PathBuf, transient_path: PathBuf) -> Result<Self> {
-        let manager = ConnectionManager::new(path, transient_path)?;
+    pub fn new() -> Self {
+        let paths = Arc::new(ArcSwapOption::new(None));
+        let manager = ConnectionManager {
+            paths: paths.clone(),
+            handle: Arc::new(Handle::current()),
+        };
         let pool = Arc::new(Handle::current().block_on(
             Pool::builder()
                 .max_size(15)
                 .idle_timeout(Some(time::Duration::from_secs(60 * 5)))
                 .build(manager)
-        )?);
-        Ok(Database { pool: pool.clone() })
+        ).expect("Failed to initialize database pool."));
+        Database {
+            paths,
+            pool: pool.clone(),
+        }
+    }
+
+    pub(crate) fn set_paths(&self, db_file: PathBuf, transient_db_file: PathBuf) {
+        self.paths.store(Some(Arc::new(ConnectionPaths {
+            db_file: db_file.into(),
+            transient_db_file: transient_db_file.into(),
+        })));
     }
 
     pub async fn connect(&self) -> Result<DbConnection> {
@@ -402,6 +420,7 @@ impl Database {
                     is_begin_transaction: false,
                     is_begin_commit: false,
                     is_in_transaction: false,
+                    is_dead: false,
                 })),
                 handle,
             }),

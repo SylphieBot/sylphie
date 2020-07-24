@@ -52,7 +52,7 @@ macro_rules! migration_script_ff344e40783a4f25b33f98135991d80f {
             from: $from,
             to: $to,
             script_name: $source,
-            script_data: include_file!($source),
+            script_data: include_str!($source),
         }
     };
 }
@@ -161,28 +161,30 @@ impl MigrationManagerState {
 }
 fn create_migrations_table_sql(is_transient: bool) -> String {
     format!(
-        r"
-            CREATE TABLE IF NOT EXISTS {}sylphie_db_migrations_tracking(
-                migration_name TEXT NOT NULL PRIMARY KEY,
-                current_version INTEGER NOT NULL
-            ) WITHOUT ROWID;
+        "\
+            CREATE TABLE IF NOT EXISTS {}sylphie_db_migrations_tracking ( \
+                migration_name TEXT NOT NULL PRIMARY KEY, \
+                current_version INTEGER NOT NULL \
+            ) WITHOUT ROWID; \
         ",
         if is_transient { "transient." } else { "" },
     )
 }
 fn query_migrations_table_sql(is_transient: bool) -> String {
     format!(
-        r"
-            SELECT current_version FROM {}sylphie_db_migrations_tracking WHERE migration_name = ?;
+        "\
+            SELECT current_version FROM {}sylphie_db_migrations_tracking \
+                WHERE migration_name = ?; \
         ",
         if is_transient { "transient." } else { "" },
     )
 }
 fn replace_migrations_table_sql(is_transient: bool) -> String {
     format!(
-        r"
-            REPLACE INTO {}sylphie_db_migrations_tracking (migration_name, current_version) \
-            VALUES(?, ?);
+        "\
+            REPLACE INTO {}sylphie_db_migrations_tracking \
+                (migration_name, current_version) \
+                VALUES(?, ?); \
         ",
         if is_transient { "transient." } else { "" },
     )

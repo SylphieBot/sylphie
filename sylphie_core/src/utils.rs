@@ -5,11 +5,15 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering, fence};
 
+/// A helper class for a global variable that is set during the lifetime of the bot.
+///
+/// This is mainly for internal use, but is provided here in case it is useful.
 pub struct GlobalInstance<T: Sync + Send + 'static> {
     is_active: AtomicBool,
     contents: ArcSwapOption<T>,
 }
 impl <T: Sync + Send + 'static> GlobalInstance<T> {
+    /// Creates a global instance container.
     pub fn new() -> Self {
         GlobalInstance {
             is_active: AtomicBool::new(false),
@@ -17,6 +21,7 @@ impl <T: Sync + Send + 'static> GlobalInstance<T> {
         }
     }
 
+    /// Sets the current instance and returns a guard that unsets it when dropped.
     pub fn set_instance(&'static self, value: T) -> InstanceScopeGuard<T> {
         if !self.is_active.compare_and_swap(false, true, Ordering::SeqCst) {
             fence(Ordering::SeqCst);
@@ -32,6 +37,10 @@ impl <T: Sync + Send + 'static> GlobalInstance<T> {
         self.contents.store(None);
     }
 
+    /// Returns a guard that contains the current instance.
+    ///
+    /// Note that if none exists, it will panic when you deref the instance, not when this method
+    /// is called.
     pub fn load(&'static self) -> InstanceGuard<T> {
         InstanceGuard {
             inner_guard: self.contents.load(),
@@ -39,10 +48,12 @@ impl <T: Sync + Send + 'static> GlobalInstance<T> {
     }
 }
 
+/// A guard for [`GlobalInstance::set_instance`].
 pub struct InstanceGuard<T: Sync + Send + 'static> {
     inner_guard: ArcSwapGuard<'static, Option<Arc<T>>>,
 }
 impl <T: Sync + Send + 'static> InstanceGuard<T> {
+    /// Returns whether an instance is actually loaded.
     pub fn is_loaded(&self) -> bool {
         self.inner_guard.is_some()
     }
@@ -54,6 +65,7 @@ impl <T: Sync + Send + 'static> Deref for InstanceGuard<T> {
     }
 }
 
+/// A guard for [`GlobalInstance::set_instance`].
 pub struct InstanceScopeGuard<T: Sync + Send + 'static> {
     instance: &'static GlobalInstance<T>,
 }

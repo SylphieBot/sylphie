@@ -106,6 +106,9 @@ fn fmt_error(fmt: &mut fmt::Formatter<'_>, e: &Error) -> fmt::Result {
         Some(bt) => write!(fmt, "\n{:?}", bt)?,
         None => write!(fmt, "\n(from catch site)\n{:?}\n\n", Backtrace::new())?,
     }
+    for ctx in e.context_backtraces() {
+        write!(fmt, "\n{:?}", ctx)?;
+    }
     Ok(())
 }
 fn fmt_deadlock(fmt: &mut fmt::Formatter<'_>, data: &Vec<Vec<DeadlockInfo>>) -> fmt::Result {

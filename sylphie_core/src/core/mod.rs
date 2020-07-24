@@ -91,6 +91,7 @@ pub struct SylphieEvents<R: Module> {
     #[subhandler] events: events::SylphieEventsImpl<R>,
     #[service] module_manager: ModuleManager,
     #[service] interface: Interface,
+    #[service] bot_info: BotInfo,
 }
 
 lazy_static! {
@@ -152,8 +153,8 @@ impl <R: Module> SylphieCore<R> {
     ///
     /// # Panics
     ///
-    /// Only one bot core may be started in the lifetime of a process. Any started after the
-    /// first will immediately panic.
+    /// Only one bot core may be started at one time. Any cores started while another core is
+    /// running
     pub fn start(mut self) -> Result<()> {
         // acquire the per-process lock
         let _guard = SYLPHIE_RUNNING_GUARD.set_instance(());
@@ -165,7 +166,11 @@ impl <R: Module> SylphieCore<R> {
         let _lock = self.lock()?;
 
         // initializes the tokio runtime
-        let runtime = tokio::runtime::Builder::new().thread_name("sylphie").build()?;
+        let runtime = tokio::runtime::Builder::new()
+            .threaded_scheduler()
+            .thread_name("sylphie")
+            .enable_all()
+            .build()?;
         runtime.enter(move || -> Result<()> {
             let runtime = tokio::runtime::Handle::current();
 
@@ -185,6 +190,7 @@ impl <R: Module> SylphieCore<R> {
                 events: events::SylphieEventsImpl(PhantomData),
                 module_manager,
                 interface: interface.clone(),
+                bot_info: self.info.clone(),
             });
 
             // start the actual bot itself

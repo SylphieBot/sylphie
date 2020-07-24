@@ -10,7 +10,7 @@ pub mod core;
 pub mod interface;
 pub mod module;
 pub mod timer;
-mod utils;
+pub mod utils;
 
 pub use crate::core::SylphieCore;
 pub use crate::errors::{Result, Error};

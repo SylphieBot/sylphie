@@ -15,6 +15,7 @@ tracing = { version = "0.1.10", features = ["log"] }
 
 sylphie_commands = { version = "0.1.0", path = "../sylphie_commands" }
 sylphie_core = { version = "0.1.0", path = "../sylphie_core" }
+sylphie_database = { version = "0.1.0", path = "../sylphie_database" }
 sylphie_derive = { version = "0.1.0", path = "../sylphie_derive" }
 
 [dev-dependencies]
