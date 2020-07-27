@@ -1,10 +1,15 @@
 use static_events::prelude_async::*;
+use sylphie::database::kvs::BaseKvsStore;
+use sylphie::database::serializable::SimpleSerialize;
 use sylphie::prelude::*;
+use sylphie_database::kvs::{PersistentKvsType, TransientKvsType};
 
 #[derive(Module)]
 #[module(integral_recursive)]
 pub struct TestModule {
     #[module_info] info: ModuleInfo,
+    #[submodule] test_store_1: BaseKvsStore<SimpleSerialize<u32>, SimpleSerialize<f32>, PersistentKvsType>,
+    #[submodule] test_store_2: BaseKvsStore<SimpleSerialize<u32>, SimpleSerialize<f32>, TransientKvsType>,
 }
 #[module_impl]
 impl TestModule {

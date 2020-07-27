@@ -1,9 +1,9 @@
 use crate::connection::{DbConnection, TransactionType, Database};
-use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use sylphie_core::errors::*;
 use tokio::runtime::Handle;
+use tokio::sync::{Mutex as AsyncMutex};
 
 /// Stores the data for a given migration.
 #[derive(Copy, Clone, Debug)]
@@ -62,27 +62,23 @@ pub use crate::{migration_script_ff344e40783a4f25b33f98135991d80f as migration_s
 
 pub struct MigrationManager {
     pool: Database,
-    data: Arc<Mutex<MigrationManagerState>>,
+    data: AsyncMutex<MigrationManagerState>,
 }
 impl MigrationManager {
     pub(in super) fn new(pool: Database) -> Self {
         MigrationManager {
             pool,
-            data: Arc::new(Mutex::new(MigrationManagerState {
+            data: AsyncMutex::new(MigrationManagerState {
                 tables_created: false,
                 repeat_transaction_watch: HashMap::new(),
-            })),
+            }),
         }
     }
 
-    pub fn execute_migration(&self, migration: &'static MigrationData) -> Result<()> {
-        let pool = self.pool.clone();
-        let data = self.data.clone();
-        Handle::current().block_on(async move {
-            let mut connection = pool.connect().await?;
-            data.lock().execute_migration(&mut connection, migration).await?;
-            Ok(())
-        })
+    pub async fn execute_migration(&self, migration: &'static MigrationData) -> Result<()> {
+        let mut connection = self.pool.connect().await?;
+        self.data.lock().await.execute_migration(&mut connection, migration).await?;
+        Ok(())
     }
 }
 
@@ -121,7 +117,7 @@ impl MigrationManagerState {
             }
         }
 
-        debug!("Running migration set {}", migration.migration_set_name);
+        trace!("Running migration set {}", migration.migration_set_name);
 
         let mut transaction = conn.transaction_with_type(TransactionType::Exclusive).await?;
         let start_version: u32 = transaction.query_row(

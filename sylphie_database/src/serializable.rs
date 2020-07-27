@@ -42,16 +42,16 @@ pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + '
     /// The schema version of this particular type.
     ///
     /// This is used to allow for manual migrations.
-    const SCHEMA_VERSION: usize;
+    const SCHEMA_VERSION: u32;
 
     /// Returns whether a given id/version combination can be migrated to the current one.
-    fn can_migrate_from(_from_id: &'static str, _from_version: usize) -> bool {
+    fn can_migrate_from(_from_id: &str, _from_version: u32) -> bool {
         false
     }
 
     /// Loads a value from a outdated KVS store
     fn do_migration(
-        _from_id: &'static str, _from_version: usize, _data: &[u8],
+        _from_id: &str, _from_version: u32, _data: &[u8],
     ) -> Result<Self> {
         bail!("Migration not supported.")
     }
@@ -60,6 +60,8 @@ pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + '
 /// A simple wrapper that implements [`DbSerializable`] over any compatible type.
 ///
 /// This does not support migrations and serializes using a non self-describing format.
+///
+/// The schema ID will be the return value of [`std::any::type_name`] with a schema version of 0.
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash, Default)]
 #[derive(Serialize)]
 #[serde(transparent)]
@@ -73,7 +75,9 @@ impl <T: Serialize + DeserializeOwned + Send + Sync + 'static>
     DbSerializable for SimpleSerialize<T>
 {
     type Format = BincodeFormat;
-    const SCHEMA_VERSION: usize = 0;
+
+    const ID: &'static str = std::any::type_name::<T>();
+    const SCHEMA_VERSION: u32 = 0;
 }
 impl <'de, T: Serialize + DeserializeOwned + Send + Sync + 'static, >
     Deserialize<'de> for SimpleSerialize<T>

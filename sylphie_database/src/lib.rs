@@ -1,3 +1,5 @@
+#![feature(const_type_name)]
+
 #[macro_use] extern crate tracing;
 
 pub mod migrations; // this goes early because there are macros we use in here
@@ -11,6 +13,7 @@ use sylphie_core::core::{EarlyInitEvent, BotInfo};
 use sylphie_core::derives::*;
 use sylphie_core::interface::SetupLoggerEvent;
 use sylphie_core::prelude::*;
+use tokio::runtime::Handle;
 
 /// The event called to initialize the database.
 pub struct InitDbEvent(());
@@ -38,7 +41,7 @@ impl DatabaseModule {
 impl DatabaseModule {
     #[event_handler(EvInit)]
     fn init_database(target: &Handler<impl Events>, _: &EarlyInitEvent) {
-        if let Err(e) = target.dispatch_sync(InitDbEvent(())) {
+        if let Err(e) = Handle::current().block_on(target.dispatch_async(InitDbEvent(()))) {
             e.report_error();
             panic!("Error occurred during early database initialization.");
         }
@@ -63,8 +66,8 @@ impl DatabaseModule {
     }
 
     #[event_handler]
-    fn init_kvs(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
-        crate::kvs::init_kvs(target)?;
+    async fn init_kvs(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
+        crate::kvs::init_kvs(target).await?;
         Ok(())
     }
 
