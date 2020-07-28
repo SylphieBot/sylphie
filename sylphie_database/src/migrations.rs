@@ -127,7 +127,7 @@ impl MigrationManagerState {
         let mut current_version = start_version;
         for script in migration.scripts {
             if current_version == script.from {
-                info!(
+                debug!(
                     "Running migration {}/{}",
                     migration.migration_set_name,
                     script.script_name.rsplit('/').next().unwrap(),
