@@ -16,7 +16,7 @@ impl <'a, E: Events> ArgsParserCtx<'a, E> {
         ArgsParserCtx {
             ctx,
             cmd,
-            current_idx: 0,
+            current_idx: 1,
         }
     }
 
@@ -33,7 +33,7 @@ impl <'a, E: Events> ArgsParserCtx<'a, E> {
 
     /// Returns the current argument and increments the current argument.
     pub fn next_arg_raw(&mut self) -> Result<CommandArg<'a>> {
-        if self.current_idx > self.ctx.args_count() {
+        if self.current_idx >= self.ctx.args_count() {
             cmd_error!("Not enough arguments for command!");
             // TODO: give a better error output
         }

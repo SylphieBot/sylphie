@@ -1,5 +1,5 @@
 use arc_swap::*;
-use crate::connection::{Database, DbConnection, TransactionType};
+use crate::connection::*;
 use crate::migrations::*;
 use crate::serializable::*;
 use fxhash::FxHashMap;
@@ -38,7 +38,6 @@ impl KvsType for TransientKvsType { }
 #[derive(Default)]
 struct SchemaCacheBuilder {
     cache: HashMap<String, u32>,
-    static_cache_forward: FxHashMap<usize, u32>,
     static_cache_backward: FxHashMap<u32, String>,
     next_key: u32,
 }
@@ -63,96 +62,7 @@ impl SchemaCacheBuilder {
             self.cache.insert(str.to_string(), self.next_key);
             self.static_cache_backward.insert(self.next_key, str.to_string());
         }
-
-        let str_usize = str.as_ptr() as usize;
-        let str_id = *self.cache.get(str).unwrap();
-
-        if !self.static_cache_forward.contains_key(&str_usize) {
-            self.static_cache_forward.insert(str_usize, str_id);
-        }
-        if !self.static_cache_backward.contains_key(&str_id) {
-        }
-
         Ok(())
-    }
-}
-
-struct KvsCommonData {
-    static_cache_forward: FxHashMap<usize, u32>,
-    static_cache_backward: FxHashMap<u32, String>,
-}
-
-struct QuerySet {
-    store_query: Arc<str>,
-    delete_query: Arc<str>,
-    load_query: Arc<str>,
-}
-impl QuerySet {
-    fn new(table_name: &str) -> Self {
-        QuerySet {
-            store_query: format!(
-                "REPLACE INTO {} (key, value, value_schema_id, value_schema_ver) \
-                 VALUES (?, ?, ?, ?)",
-                table_name,
-            ).into(),
-            delete_query: format!("DELETE FROM {} WHERE key = ?;", table_name).into(),
-            load_query: format!(
-                "SELECT value, value_schema_id, value_schema_ver FROM {} WHERE key = ?;",
-                table_name,
-            ).into(),
-        }
-    }
-
-    async fn store_value<K: DbSerializable, V: DbSerializable>(
-        &self, conn: &mut DbConnection, key: &K, value: &V,
-    ) -> Result<()> {
-        conn.execute(
-            self.store_query.clone(),
-            (
-                ByteBuf::from(K::Format::serialize(key)?),
-                ByteBuf::from(V::Format::serialize(value)?),
-                V::ID, V::SCHEMA_VERSION,
-            ),
-        ).await?;
-        Ok(())
-    }
-    async fn delete_value<K: DbSerializable>(
-        &self, conn: &mut DbConnection, key: &K,
-    ) -> Result<()> {
-        conn.execute(
-            self.delete_query.clone(),
-            ByteBuf::from(K::Format::serialize(key)?),
-        ).await?;
-        Ok(())
-    }
-    async fn load_value<'a, K: DbSerializable, V: DbSerializable>(
-        &'a self, conn: &'a mut DbConnection, key: &K, cache: &'a KvsCommonData,
-        is_migration_mandatory: bool,
-    ) -> Result<Option<V>> {
-        let result: Option<(ByteBuf, u32, u32)> = conn.query_row(
-            self.load_query.clone(),
-            ByteBuf::from(K::Format::serialize(key)?),
-        ).await?;
-        if let Some((bytes, schema_id, schema_ver)) = result {
-            let schema_name = cache.static_cache_backward.get(&schema_id)
-                .expect("invalid ID in database!")
-                .as_str();
-            if V::ID == schema_name && V::SCHEMA_VERSION == schema_ver {
-                Ok(Some(V::Format::deserialize(&bytes)?))
-            } else if V::can_migrate_from(schema_name, schema_ver) {
-                Ok(Some(V::do_migration(schema_name, schema_ver, &bytes)?))
-            } else if !is_migration_mandatory {
-                Ok(None)
-            } else {
-                bail!(
-                    "Could not migrate value to current schema version! \
-                     (old: {} v{}, new: {} v{})",
-                    schema_name, schema_id, V::ID, V::SCHEMA_VERSION,
-                );
-            }
-        } else {
-            Ok(None)
-        }
     }
 }
 
@@ -313,7 +223,11 @@ impl <'a> InitKvsEvent<'a> {
     }
 }
 
-struct InitKvsLate(KvsCommonData);
+struct InitKvsLate {
+    cache: HashMap<String, u32>,
+    static_cache_backward: Arc<FxHashMap<u32, String>>,
+    module_metadata: HashMap<KvsTarget, KvsMetadata>,
+}
 simple_event!(InitKvsLate);
 
 static PERSISTENT_KVS_MIGRATIONS: MigrationData = MigrationData {
@@ -340,7 +254,7 @@ pub(crate) async fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
     migrations.execute_migration(&TRANSIENT_KVS_MIGRATIONS).await?;
 
     // initialize the state for init KVS
-    let mut conn = target.get_service::<Database>().connect().await?;
+    let mut conn = target.connect_db().await?;
     let mut key_cache = SchemaCacheBuilder::default();
     let mut module_metadata = HashMap::new();
     let mut event = InitKvsEvent {
@@ -358,22 +272,139 @@ pub(crate) async fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
     event.load_kvs_metadata(false).await?;
     event.load_kvs_metadata(true).await?;
 
-    // dispatch the KVS initialization event
+    // check that everything is OK, and create tables/etc
     target.dispatch_async(event).await?;
 
     // drop unused transient tables
-    // TODO
+    for (key, metadata) in &module_metadata {
+        if !metadata.is_used && key.is_transient {
+            conn.execute_nullary(format!(
+                "DROP TABLE {}{}",
+                if key.is_transient { "transient." } else { "" },
+                metadata.table_name,
+            )).await?;
+        }
+    }
+
+    // Drop our connection.
+    std::mem::drop(conn);
+
+    // initialize the actual kvs stores' internal state
+    target.dispatch_async(InitKvsLate {
+        cache: key_cache.cache,
+        static_cache_backward: Arc::new(key_cache.static_cache_backward),
+        module_metadata,
+    }).await;
 
     Ok(())
+}
+
+struct BaseKvsStoreInfo {
+    static_cache_backward: Arc<FxHashMap<u32, String>>,
+    value_id: u32,
+    queries: KvsStoreQueries,
+}
+impl BaseKvsStoreInfo {
+    fn new(
+        module: &str, is_transient: bool, late: &InitKvsLate, value_id: &str,
+    ) -> Self {
+        let metadata = late.module_metadata.get(&KvsTarget {
+            module_path: module.to_string(),
+            is_transient,
+        }).unwrap();
+        BaseKvsStoreInfo {
+            static_cache_backward: late.static_cache_backward.clone(),
+            value_id: *late.cache.get(value_id).unwrap(),
+            queries: KvsStoreQueries::new(&format!(
+                "{}{}",
+                if is_transient { "transient." } else { "" },
+                metadata.table_name,
+            )),
+        }
+    }
+}
+
+struct KvsStoreQueries {
+    store_query: Arc<str>,
+    delete_query: Arc<str>,
+    load_query: Arc<str>,
+}
+impl KvsStoreQueries {
+    fn new(table_name: &str) -> Self {
+        KvsStoreQueries {
+            store_query: format!(
+                "REPLACE INTO {} (key, value, value_schema_id, value_schema_ver) \
+                 VALUES (?, ?, ?, ?)",
+                table_name,
+            ).into(),
+            delete_query: format!("DELETE FROM {} WHERE key = ?;", table_name).into(),
+            load_query: format!(
+                "SELECT value, value_schema_id, value_schema_ver FROM {} WHERE key = ?;",
+                table_name,
+            ).into(),
+        }
+    }
+
+    async fn store_value<K: DbSerializable, V: DbSerializable>(
+        &self, conn: &mut DbConnection, key: &K, value: &V, value_schema_id: u32,
+    ) -> Result<()> {
+        conn.execute(
+            self.store_query.clone(),
+            (
+                ByteBuf::from(K::Format::serialize(key)?),
+                ByteBuf::from(V::Format::serialize(value)?),
+                value_schema_id, V::SCHEMA_VERSION,
+            ),
+        ).await?;
+        Ok(())
+    }
+    async fn delete_value<K: DbSerializable>(
+        &self, conn: &mut DbConnection, key: &K,
+    ) -> Result<()> {
+        conn.execute(
+            self.delete_query.clone(),
+            ByteBuf::from(K::Format::serialize(key)?),
+        ).await?;
+        Ok(())
+    }
+    async fn load_value<'a, K: DbSerializable, V: DbSerializable>(
+        &'a self, conn: &'a mut DbConnection, key: &K, cache: &'a BaseKvsStoreInfo,
+        is_migration_mandatory: bool,
+    ) -> Result<Option<V>> {
+        let result: Option<(ByteBuf, u32, u32)> = conn.query_row(
+            self.load_query.clone(),
+            ByteBuf::from(K::Format::serialize(key)?),
+        ).await?;
+        if let Some((bytes, schema_id, schema_ver)) = result {
+            let schema_name = cache.static_cache_backward.get(&schema_id)
+                .expect("invalid ID in database!")
+                .as_str();
+            if V::ID == schema_name && V::SCHEMA_VERSION == schema_ver {
+                Ok(Some(V::Format::deserialize(&bytes)?))
+            } else if V::can_migrate_from(schema_name, schema_ver) {
+                Ok(Some(V::do_migration(schema_name, schema_ver, &bytes)?))
+            } else if !is_migration_mandatory {
+                Ok(None)
+            } else {
+                bail!(
+                    "Could not migrate value to current schema version! \
+                     (old: {} v{}, new: {} v{})",
+                    schema_name, schema_id, V::ID, V::SCHEMA_VERSION,
+                );
+            }
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Module)]
 #[module(component)]
 pub struct BaseKvsStore<K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> {
     #[module_info] info: ModuleInfo,
-    data: HashMap<K, V>, // TODO: Temp
+    data: ArcSwapOption<BaseKvsStoreInfo>,
     // TODO: Actual proper caching of some sort.
-    phantom: PhantomData<fn(& &mut T)>,
+    phantom: PhantomData<(fn(& &mut T), K, V)>,
 }
 #[module_impl]
 impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore<K, V, T> {
@@ -381,5 +412,28 @@ impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore
     async fn handle_init<'a>(&self, ev: &mut InitKvsEvent<'a>) -> Result<()> {
         ev.init_module(K::ID, K::SCHEMA_VERSION, V::ID, &self.info, T::IS_TRANSIENT).await?;
         Ok(())
+    }
+
+    #[event_handler]
+    async fn handle_late_init(&self, ev: &InitKvsLate) {
+        self.data.store(Some(Arc::new(BaseKvsStoreInfo::new(
+            self.info.name(), T::IS_TRANSIENT, ev, V::ID,
+        ))));
+    }
+
+    pub async fn get(&self, target: &Handler<impl Events>, k: &K) -> Result<Option<V>> {
+        let data = self.data.load();
+        let data = data.as_ref().expect("BaseKvsStore not initialized??");
+        data.queries.load_value(&mut target.connect_db().await?, k, data, !T::IS_TRANSIENT).await
+    }
+    pub async fn set(&self, target: &Handler<impl Events>, k: &K, v: &V) -> Result<()> {
+        let data = self.data.load();
+        let data = data.as_ref().expect("BaseKvsStore not initialized??");
+        data.queries.store_value(&mut target.connect_db().await?, k, v, data.value_id).await
+    }
+    pub async fn remove(&self, target: &Handler<impl Events>, k: &K) -> Result<()> {
+        let data = self.data.load();
+        let data = data.as_ref().expect("BaseKvsStore not initialized??");
+        data.queries.delete_value(&mut target.connect_db().await?, k).await
     }
 }

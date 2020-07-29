@@ -1,8 +1,6 @@
 use crate::connection::{DbConnection, TransactionType, Database};
 use std::collections::HashMap;
-use std::sync::Arc;
 use sylphie_core::errors::*;
-use tokio::runtime::Handle;
 use tokio::sync::{Mutex as AsyncMutex};
 
 /// Stores the data for a given migration.

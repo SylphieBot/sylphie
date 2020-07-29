@@ -19,7 +19,7 @@ pub enum ErrorKind {
     #[error("Internal error: {0}")]
     InternalError(Cow<'static, str>),
     /// An panic occurred.
-    #[error("Panicked with '{0}' {}", panic::DisplayOptPanicLoc(&.1))]
+    #[error("Panicked with '{0}'{}", panic::DisplayOptPanicLoc(&.1))]
     Panicked(Cow<'static, str>, Option<PanicLocation>),
     /// An error occurred in a command.
     ///

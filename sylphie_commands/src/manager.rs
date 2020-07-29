@@ -166,7 +166,7 @@ impl CommandManager {
             match command {
                 CommandLookupResult::NoneFound => ctx.respond("No such command found.").await?,
                 CommandLookupResult::Found(cmd) => {
-                    match cmd.execute(ctx).await {
+                    match Error::catch_panic_async(cmd.execute(ctx)).await {
                         Ok(()) => { }
                         Err(e) => {
                             // split to avoid saving a `&ErrorKind` which is !Send

@@ -1,6 +1,7 @@
 use serde::*;
 use serde::de::DeserializeOwned;
 use sylphie_core::prelude::*;
+use bincode::Options;
 
 /// A format that can be used to serialize database values.
 pub trait SerializationFormat {
@@ -12,10 +13,10 @@ pub trait SerializationFormat {
 pub enum BincodeFormat { }
 impl SerializationFormat for BincodeFormat {
     fn serialize(val: &impl DbSerializable) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(val)?)
+        Ok(bincode::DefaultOptions::new().with_varint_encoding().serialize(val)?)
     }
     fn deserialize<T: DbSerializable>(val: &[u8]) -> Result<T> {
-        Ok(bincode::deserialize(val)?)
+        Ok(bincode::DefaultOptions::new().with_varint_encoding().deserialize(val)?)
     }
 }
 
@@ -65,7 +66,7 @@ pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + '
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash, Default)]
 #[derive(Serialize)]
 #[serde(transparent)]
-pub struct SimpleSerialize<T: Serialize + DeserializeOwned + Send + Sync + 'static>(T);
+pub struct SimpleSerialize<T: Serialize + DeserializeOwned + Send + Sync + 'static>(pub T);
 impl <T: Serialize + DeserializeOwned + Send + Sync + 'static> From<T> for SimpleSerialize<T> {
     fn from(t: T) -> Self {
         SimpleSerialize(t)

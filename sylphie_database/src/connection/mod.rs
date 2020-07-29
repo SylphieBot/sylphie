@@ -3,7 +3,6 @@ use async_trait::*;
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 use std::path::{PathBuf, Path};
 use std::time;
@@ -485,3 +484,17 @@ impl Database {
         })
     }
 }
+
+/// Contains extension functions defined directly on `Handler<impl Events>`.
+#[async_trait]
+pub trait SylphieDatabaseHandlerExt {
+    /// Connects to the database.
+    async fn connect_db(&self) -> Result<DbConnection>;
+}
+#[async_trait]
+impl <E: Events> SylphieDatabaseHandlerExt for Handler<E> {
+    async fn connect_db(&self) -> Result<DbConnection> {
+        self.get_service::<Database>().connect().await
+    }
+}
+

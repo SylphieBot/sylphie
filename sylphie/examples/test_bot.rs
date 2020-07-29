@@ -26,6 +26,7 @@ pub struct MyModule {
     #[module_info] info: ModuleInfo,
     #[submodule] submod_a: TestModule,
     #[submodule] submod_b: TestModule,
+    #[submodule] kvs: BaseKvsStore<SimpleSerialize<String>, SimpleSerialize<String>, PersistentKvsType>,
 }
 
 #[module_impl]
@@ -41,6 +42,29 @@ impl MyModule {
     #[command]
     async fn cmd_backtrace(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
         ctx.respond(&format!("\n\n{:?}", backtrace::Backtrace::new())).await?;
+        Ok(())
+    }
+
+    #[command]
+    async fn cmd_test_panic(&self) -> Result<()> {
+        panic!("User requested panic.")
+    }
+
+    #[command]
+    async fn cmd_test_error(&self) -> Result<()> {
+        bail!("User requested error.")
+    }
+
+    #[command]
+    async fn cmd_test_kvs(
+        &self, ctx: &CommandCtx<impl Events>, key: String, val: String,
+    ) -> Result<()> {
+        let cur = self.kvs.get(ctx.handler(), &SimpleSerialize(key.clone())).await?;
+        ctx.respond(&format!("Current value for {}: {:?}", key, cur)).await?;
+        self.kvs.set(
+            ctx.handler(), &SimpleSerialize(key.clone()), &SimpleSerialize(val.clone()),
+        ).await?;
+        ctx.respond(&format!("New     value for {}: {}", key, val)).await?;
         Ok(())
     }
 }
