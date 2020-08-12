@@ -9,6 +9,7 @@ pub mod errors; // this goes before to make sure macros resolve
 pub mod core;
 pub mod interface;
 pub mod module;
+pub mod scopes;
 pub mod timer;
 pub mod utils;
 
@@ -45,6 +46,8 @@ pub mod prelude {
     pub use crate::errors::{Error, ErrorKind, ErrorWrapper, ErrorFromContextExt, Result};
     pub use crate::errors::{cmd_error, bail, ensure};
     pub use crate::module::{Module, ModuleInfo};
+    pub use crate::scopes::{Scope, ScopeArgs};
+    pub use crate::utils::StringWrapper;
     pub use static_events::prelude_async::*;
     pub use std::result::{Result as StdResult};
 }

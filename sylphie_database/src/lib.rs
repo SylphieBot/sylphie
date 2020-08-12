@@ -4,8 +4,10 @@
 
 pub mod migrations; // this goes early because there are macros we use in here
 
+pub mod config;
 pub mod connection;
 pub mod kvs;
+mod schema_id;
 pub mod serializable;
 
 use std::fs;
@@ -27,6 +29,7 @@ failable_event!(InitDbEvent, (), Error);
 pub struct DatabaseModule {
     #[service] database: connection::Database,
     #[service] migrations: migrations::MigrationManager,
+    #[service] kvs_cache: schema_id::SchemaCache,
 }
 impl DatabaseModule {
     pub fn new() -> Self {
@@ -34,6 +37,7 @@ impl DatabaseModule {
         DatabaseModule {
             database: database.clone(),
             migrations: migrations::MigrationManager::new(database),
+            kvs_cache: Default::default(),
         }
     }
 }
@@ -66,7 +70,8 @@ impl DatabaseModule {
     }
 
     #[event_handler]
-    async fn init_kvs(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
+    async fn init_serializers(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
+        crate::schema_id::init_schema_cache(target).await?;
         crate::kvs::init_kvs(target).await?;
         Ok(())
     }

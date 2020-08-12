@@ -107,45 +107,6 @@ pub enum TransactionType {
     Exclusive,
 }
 
-/// A wrapper enum for storing SQL code.
-#[derive(Clone, Debug)]
-pub enum SqlCode {
-    Static(&'static str),
-    Owned(String),
-    Shared(Arc<str>),
-}
-impl SqlCode {
-    /// Returns the string contained in this type.
-    pub fn as_str(&self) -> &str {
-        match self {
-            SqlCode::Static(s) => s,
-            SqlCode::Owned(s) => &s,
-            SqlCode::Shared(s) => &s
-        }
-    }
-}
-impl From<&'static str> for SqlCode {
-    fn from(s: &'static str) -> Self {
-        SqlCode::Static(s)
-    }
-}
-impl From<String> for SqlCode {
-    fn from(s: String) -> Self {
-        SqlCode::Owned(s)
-    }
-}
-impl From<Arc<str>> for SqlCode {
-    fn from(s: Arc<str>) -> Self {
-        SqlCode::Shared(s)
-    }
-}
-impl Deref for SqlCode {
-    type Target = str;
-    fn deref(&self) -> &Self::Target {
-        self.as_str()
-    }
-}
-
 /// The underlying struct that contains database operations. This is obtained via [`DerefMut`] in
 /// [`DbConnection`] and [`DbTransaction`].
 pub struct DbOps(BlockingWrapper<DbOpsData>);
@@ -214,24 +175,24 @@ impl DbOpsData {
     }
 
     fn execute(
-        &mut self, sql: SqlCode, params: impl Serialize + Send + 'static,
+        &mut self, sql: StringWrapper, params: impl Serialize + Send + 'static,
     ) -> Result<usize> {
         let data = serde_rusqlite::to_params(params)?;
         Ok(self.conn.get()?.execute(&sql, &data.to_slice())?)
     }
     fn execute_named(
-        &mut self, sql: SqlCode, params: impl Serialize + Send + 'static,
+        &mut self, sql: StringWrapper, params: impl Serialize + Send + 'static,
     ) -> Result<usize> {
         let data = serde_rusqlite::to_params_named(params)?;
         Ok(self.conn.get()?.execute_named(&sql, &data.to_slice())?)
     }
-    fn execute_batch(&mut self, sql: SqlCode) -> Result<()> {
+    fn execute_batch(&mut self, sql: StringWrapper) -> Result<()> {
         self.conn.get()?.execute_batch(&sql)?;
         Ok(())
     }
 
     fn query_row<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: SqlCode, params: impl Serialize + Send + 'static,
+        &mut self, sql: StringWrapper, params: impl Serialize + Send + 'static,
     ) -> Result<Option<T>> {
         let data = serde_rusqlite::to_params(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
@@ -242,7 +203,7 @@ impl DbOpsData {
         }
     }
     fn query_row_named<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: SqlCode, params: impl Serialize + Send + 'static,
+        &mut self, sql: StringWrapper, params: impl Serialize + Send + 'static,
     ) -> Result<Option<T>> {
         let data = serde_rusqlite::to_params_named(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
@@ -254,7 +215,7 @@ impl DbOpsData {
     }
 
     fn query_vec<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: SqlCode, params: impl Serialize + Send + 'static,
+        &mut self, sql: StringWrapper, params: impl Serialize + Send + 'static,
     ) -> Result<Vec<T>> {
         let data = serde_rusqlite::to_params(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
@@ -262,7 +223,7 @@ impl DbOpsData {
         Ok(rows.collect::<StdResult<Vec<T>, _>>()?)
     }
     fn query_vec_named<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: SqlCode, params: impl Serialize + Send + 'static,
+        &mut self, sql: StringWrapper, params: impl Serialize + Send + 'static,
     ) -> Result<Vec<T>> {
         let data = serde_rusqlite::to_params_named(params)?;
         let mut stat = self.conn.get()?.prepare(&sql)?;
@@ -288,46 +249,46 @@ impl Drop for DbOpsData {
 impl DbOps {
     /// Executes a SQL query with unnamed parameters.
     pub async fn execute(
-        &mut self, sql: impl Into<SqlCode>, params: impl Serialize + Send + 'static,
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
     ) -> Result<usize> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.execute(sql, params)).await
     }
     /// Executes a SQL query with no parameters.
-    pub async fn execute_nullary(&mut self, sql: impl Into<SqlCode>) -> Result<usize> {
+    pub async fn execute_nullary(&mut self, sql: impl Into<StringWrapper>) -> Result<usize> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.execute_named(sql, &[] as &[()])).await
     }
     /// Executes a SQL query with named parameters.
     pub async fn execute_named(
-        &mut self, sql: impl Into<SqlCode>, params: impl Serialize + Send + 'static,
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
     ) -> Result<usize> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.execute_named(sql, params)).await
     }
     /// Executes multiple SQL statements.
-    pub async fn execute_batch(&mut self, sql: impl Into<SqlCode>) -> Result<()> {
+    pub async fn execute_batch(&mut self, sql: impl Into<StringWrapper>) -> Result<()> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.execute_batch(sql)).await
     }
 
     /// Queries a row of the SQL statements with unnamed parameters.
     pub async fn query_row<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<SqlCode>, params: impl Serialize + Send + 'static,
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
     ) -> Result<Option<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_row(sql, params)).await
     }
     /// Queries a row of the SQL statements with no parameters.
     pub async fn query_row_nullary<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<SqlCode>,
+        &mut self, sql: impl Into<StringWrapper>,
     ) -> Result<Option<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_row(sql, &[] as &[()])).await
     }
     /// Queries a row of the SQL statements with named parameters.
     pub async fn query_row_named<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<SqlCode>, params: impl Serialize + Send + 'static,
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
     ) -> Result<Option<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_row_named(sql, params)).await
@@ -335,21 +296,21 @@ impl DbOps {
 
     /// Queries the results of SQL statements with unnamed parameters.
     pub async fn query_vec<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<SqlCode>, params: impl Serialize + Send + 'static,
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
     ) -> Result<Vec<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_vec(sql, params)).await
     }
     /// Queries the results of SQL statements with no parameters.
     pub async fn query_vec_nullary<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<SqlCode>
+        &mut self, sql: impl Into<StringWrapper>
     ) -> Result<Vec<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_vec(sql, &[] as &[()])).await
     }
     /// Queries the results of SQL statements with named parameters.
     pub async fn query_vec_named<T: DeserializeOwned + Send + 'static>(
-        &mut self, sql: impl Into<SqlCode>, params: impl Serialize + Send + 'static,
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
     ) -> Result<Vec<T>> {
         let sql = sql.into();
         self.0.run_blocking(move |c| c.query_vec_named(sql, params)).await

@@ -1,4 +1,5 @@
 use crate::connection::{DbConnection, TransactionType, Database};
+use static_events::prelude_async::*;
 use std::collections::HashMap;
 use sylphie_core::errors::*;
 use tokio::sync::{Mutex as AsyncMutex};
@@ -40,6 +41,11 @@ pub struct MigrationData {
     /// it will be applied. Therefore, scripts should be sorted in the order you want them to be
     /// applied in.
     pub scripts: &'static [MigrationScriptData],
+}
+impl MigrationData {
+    pub async fn execute(&'static self, target: &Handler<impl Events>) -> Result<()> {
+        target.get_service::<MigrationManager>().execute_migration(self).await
+    }
 }
 
 /// Defines a migration script.

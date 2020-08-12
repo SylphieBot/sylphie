@@ -3,6 +3,7 @@ pub use sylphie_core::errors;
 pub use sylphie_core::interface;
 pub use sylphie_core::timer;
 pub use sylphie_core::module;
+pub use sylphie_core::scopes;
 pub use sylphie_core::utils;
 
 pub mod commands {

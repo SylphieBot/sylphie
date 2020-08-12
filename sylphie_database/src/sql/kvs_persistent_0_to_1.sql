@@ -5,8 +5,3 @@ CREATE TABLE sylphie_db_kvs_info (
     key_id INTEGER NOT NULL,
     key_version INTEGER NOT NULL
 ) WITHOUT ROWID;
-
-CREATE TABLE sylphie_db_kvs_schema_ids (
-    schema_id_name TEXT PRIMARY KEY,
-    schema_id_key INTEGER UNIQUE
-) WITHOUT ROWID;

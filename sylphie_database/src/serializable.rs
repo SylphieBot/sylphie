@@ -58,11 +58,35 @@ pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + '
     }
 }
 
+impl DbSerializable for StringWrapper {
+    type Format = BincodeFormat;
+    const ID: &'static str = "sylphie_core::utils::StringWrapper";
+    const SCHEMA_VERSION: u32 = 0;
+}
+impl DbSerializable for ScopeArgs {
+    type Format = BincodeFormat;
+    const ID: &'static str = "sylphie_core::scopes::ScopeArgs";
+    const SCHEMA_VERSION: u32 = 0;
+}
+impl DbSerializable for Scope {
+    type Format = BincodeFormat;
+    const ID: &'static str = "sylphie_core::scopes::Scope";
+    const SCHEMA_VERSION: u32 = 0;
+}
+
+impl DbSerializable for String {
+    type Format = BincodeFormat;
+    const ID: &'static str = "std::string::String";
+    const SCHEMA_VERSION: u32 = 0;
+}
+
+// TODO: DbSerializable for integer keys.
+
 /// A simple wrapper that implements [`DbSerializable`] over any compatible type.
 ///
 /// This does not support migrations and serializes using a non self-describing format.
 ///
-/// The schema ID will be the return value of [`std::any::type_name`] with a schema version of 0.
+/// The schema ID will `"simple_serialize"` with a schema version of 0.
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash, Default)]
 #[derive(Serialize)]
 #[serde(transparent)]
@@ -77,7 +101,7 @@ impl <T: Serialize + DeserializeOwned + Send + Sync + 'static>
 {
     type Format = BincodeFormat;
 
-    const ID: &'static str = std::any::type_name::<T>();
+    const ID: &'static str = "simple_serialize";
     const SCHEMA_VERSION: u32 = 0;
 }
 impl <'de, T: Serialize + DeserializeOwned + Send + Sync + 'static, >
