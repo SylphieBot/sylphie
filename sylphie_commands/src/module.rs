@@ -1,8 +1,8 @@
+use async_trait::*;
 use crate::commands::*;
 use crate::ctx::*;
 use crate::manager::*;
-use futures::FutureExt;
-use futures::future::BoxFuture;
+use std::time::Instant;
 use sylphie_core::core::{SylphieEvents, InitEvent};
 use sylphie_core::derives::*;
 use sylphie_core::interface::{TerminalCommandEvent, SetupLoggerEvent};
@@ -34,8 +34,12 @@ impl <R: Module> CommandsModule<R> {
         let ctx = CommandCtx::new(target, TerminalContext {
             raw_message: command.0.clone(),
         });
+        let start_time = Instant::now();
         if let Err(e) = target.get_service::<CommandManager>().execute(&ctx).await {
             e.report_error();
+        } else {
+            let total_time = (Instant::now() - start_time).as_millis();
+            info!(target: "[term]", "Command completed in {} ms", total_time);
         }
     }
 
@@ -48,17 +52,22 @@ impl <R: Module> CommandsModule<R> {
 struct TerminalContext {
     raw_message: String,
 }
+#[async_trait]
 impl CommandCtxImpl for TerminalContext {
+    fn scopes(&self) -> &[Scope] {
+        const SCOPES: [Scope; 1] = [Scope {
+            scope_type: StringWrapper::Static("terminal"),
+            args: ScopeArgs::None,
+        }];
+        &SCOPES
+    }
+
     fn raw_message(&self) -> &str {
         &self.raw_message
     }
 
-    fn respond<'a>(
-        &'a self, _: &'a Handler<impl Events>, msg: &'a str,
-    ) -> BoxFuture<'a, Result<()>> {
-        async move {
-            info!(target: "[term]", "{}", msg);
-            Ok(())
-        }.boxed()
+    async fn respond<E: Events>(&self, _: &Handler<E>, msg: &str) -> Result<()> {
+        info!(target: "[term]", "{}", msg);
+        Ok(())
     }
 }

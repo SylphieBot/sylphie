@@ -5,9 +5,9 @@
 pub mod migrations; // this goes early because there are macros we use in here
 
 pub mod config;
+mod interner;
 pub mod connection;
 pub mod kvs;
-mod schema_id;
 pub mod serializable;
 
 use std::fs;
@@ -15,7 +15,6 @@ use sylphie_core::core::{EarlyInitEvent, BotInfo};
 use sylphie_core::derives::*;
 use sylphie_core::interface::SetupLoggerEvent;
 use sylphie_core::prelude::*;
-use tokio::runtime::Handle;
 
 /// The event called to initialize the database.
 pub struct InitDbEvent(());
@@ -27,17 +26,19 @@ failable_event!(InitDbEvent, (), Error);
 /// correctly.
 #[derive(Events)]
 pub struct DatabaseModule {
+    #[service] #[subhandler] config: config::ConfigManager,
+    #[service] interner: interner::StringInterner,
     #[service] database: connection::Database,
     #[service] migrations: migrations::MigrationManager,
-    #[service] kvs_cache: schema_id::SchemaCache,
 }
 impl DatabaseModule {
     pub fn new() -> Self {
         let database = connection::Database::new();
         DatabaseModule {
+            config: Default::default(),
+            interner: Default::default(),
             database: database.clone(),
             migrations: migrations::MigrationManager::new(database),
-            kvs_cache: Default::default(),
         }
     }
 }
@@ -45,7 +46,7 @@ impl DatabaseModule {
 impl DatabaseModule {
     #[event_handler(EvInit)]
     fn init_database(target: &Handler<impl Events>, _: &EarlyInitEvent) {
-        if let Err(e) = Handle::current().block_on(target.dispatch_async(InitDbEvent(()))) {
+        if let Err(e) = target.dispatch_sync(InitDbEvent(())) {
             e.report_error();
             panic!("Error occurred during early database initialization.");
         }
@@ -70,9 +71,10 @@ impl DatabaseModule {
     }
 
     #[event_handler]
-    async fn init_serializers(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
-        crate::schema_id::init_schema_cache(target).await?;
-        crate::kvs::init_kvs(target).await?;
+    fn init_serializers(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
+        crate::interner::init_interner(target)?;
+        crate::kvs::init_kvs(target)?;
+        crate::config::init_config(target)?;
         Ok(())
     }
 

@@ -1,8 +1,10 @@
-use crate::connection::{DbConnection, TransactionType, Database};
+use crate::connection::*;
+use parking_lot::Mutex;
 use static_events::prelude_async::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 use sylphie_core::errors::*;
-use tokio::sync::{Mutex as AsyncMutex};
+use tokio::runtime::Handle;
 
 /// Stores the data for a given migration.
 #[derive(Copy, Clone, Debug)]
@@ -46,6 +48,9 @@ impl MigrationData {
     pub async fn execute(&'static self, target: &Handler<impl Events>) -> Result<()> {
         target.get_service::<MigrationManager>().execute_migration(self).await
     }
+    pub fn execute_sync(&'static self, target: &Handler<impl Events>) -> Result<()> {
+        target.get_service::<MigrationManager>().execute_migration_sync(self)
+    }
 }
 
 /// Defines a migration script.
@@ -66,22 +71,32 @@ pub use crate::{migration_script_ff344e40783a4f25b33f98135991d80f as migration_s
 
 pub struct MigrationManager {
     pool: Database,
-    data: AsyncMutex<MigrationManagerState>,
+    data: Arc<Mutex<MigrationManagerState>>,
 }
 impl MigrationManager {
     pub(in super) fn new(pool: Database) -> Self {
         MigrationManager {
             pool,
-            data: AsyncMutex::new(MigrationManagerState {
+            data: Arc::new(Mutex::new(MigrationManagerState {
                 tables_created: false,
                 repeat_transaction_watch: HashMap::new(),
-            }),
+            })),
         }
     }
 
     pub async fn execute_migration(&self, migration: &'static MigrationData) -> Result<()> {
-        let mut connection = self.pool.connect().await?;
-        self.data.lock().await.execute_migration(&mut connection, migration).await?;
+        let pool = self.pool.clone();
+        let data = self.data.clone();
+        Handle::current().spawn_blocking(move || -> Result<()> {
+            let mut connection = pool.connect_sync()?;
+            data.lock().execute_migration(&mut connection, migration)?;
+            Ok(())
+        }).await?
+    }
+
+    pub fn execute_migration_sync(&self, migration: &'static MigrationData) -> Result<()> {
+        let mut connection = self.pool.connect_sync()?;
+        self.data.lock().execute_migration(&mut connection, migration)?;
         Ok(())
     }
 }
@@ -91,19 +106,19 @@ struct MigrationManagerState {
     repeat_transaction_watch: HashMap<&'static str, &'static MigrationData>,
 }
 impl MigrationManagerState {
-    async fn create_migrations_table(&mut self, conn: &mut DbConnection) -> Result<()> {
+    fn create_migrations_table(&mut self, conn: &mut DbSyncConnection) -> Result<()> {
         if !self.tables_created {
-            conn.execute_batch(create_migrations_table_sql(false)).await?;
-            conn.execute_batch(create_migrations_table_sql(true)).await?;
+            conn.execute_batch(create_migrations_table_sql(false))?;
+            conn.execute_batch(create_migrations_table_sql(true))?;
             self.tables_created = true;
         }
         Ok(())
     }
 
-    async fn execute_migration<'a>(
-        &'a mut self, conn: &'a mut DbConnection, migration: &'static MigrationData
+    fn execute_migration(
+        &mut self, conn: &mut DbSyncConnection, migration: &'static MigrationData
     ) -> Result<()> {
-        self.create_migrations_table(conn).await?;
+        self.create_migrations_table(conn)?;
         if let Some(data) = self.repeat_transaction_watch.get(&migration.migration_id) {
             let data_off = data as *const _ as usize;
             let migration_off = migration as *const _ as usize;
@@ -123,11 +138,11 @@ impl MigrationManagerState {
 
         trace!("Running migration set {}", migration.migration_set_name);
 
-        let mut transaction = conn.transaction_with_type(TransactionType::Exclusive).await?;
+        let mut transaction = conn.transaction_with_type(TransactionType::Exclusive)?;
         let start_version: u32 = transaction.query_row(
             query_migrations_table_sql(migration.is_transient),
             migration.migration_id,
-        ).await?.unwrap_or(0);
+        )?.unwrap_or(0);
         let mut current_version = start_version;
         for script in migration.scripts {
             if current_version == script.from {
@@ -136,11 +151,11 @@ impl MigrationManagerState {
                     migration.migration_set_name,
                     script.script_name.rsplit('/').next().unwrap(),
                 );
-                transaction.execute_batch(script.script_data).await?;
+                transaction.execute_batch(script.script_data)?;
                 transaction.execute(
                     replace_migrations_table_sql(migration.is_transient),
                     (migration.migration_id, script.to),
-                ).await?;
+                )?;
                 current_version = script.to;
             }
         }
@@ -152,7 +167,7 @@ impl MigrationManagerState {
             );
             bail!("Could not successfully apply migration.");
         }
-        transaction.commit().await?;
+        transaction.commit()?;
 
         self.repeat_transaction_watch.insert(migration.migration_id, migration);
 

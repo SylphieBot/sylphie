@@ -107,9 +107,6 @@ pub enum TransactionType {
     Exclusive,
 }
 
-/// The underlying struct that contains database operations. This is obtained via [`DerefMut`] in
-/// [`DbConnection`] and [`DbTransaction`].
-pub struct DbOps(BlockingWrapper<DbOpsData>);
 struct DbOpsData {
     conn_handle: Option<PooledConnection<ConnectionManager>>,
     conn: BlockingWrapper<Connection>,
@@ -152,6 +149,8 @@ impl DbOpsData {
         Ok(())
     }
     fn rollback_in_drop(&mut self) {
+        debug!("Database transaction was dropped. Rolling back.");
+
         self.is_dead = true;
 
         // rollback the transaction in a blocking thread. The connection will only be returned
@@ -246,6 +245,10 @@ impl Drop for DbOpsData {
         }
     }
 }
+
+/// The underlying struct that contains database operations. This is obtained via [`DerefMut`] in
+/// [`DbConnection`] and [`DbTransaction`].
+pub struct DbOps(BlockingWrapper<DbOpsData>);
 impl DbOps {
     /// Executes a SQL query with unnamed parameters.
     pub async fn execute(
@@ -394,6 +397,151 @@ impl <'a> Drop for DbTransaction<'a> {
     }
 }
 
+/// The underlying struct that contains synchronous database operations. This is obtained via
+/// [`DerefMut`] in [`DbConnection`] and [`DbTransaction`].
+pub struct DbSyncOps(Option<DbOpsData>);
+impl DbSyncOps {
+    fn get_ops(&mut self) -> Result<&mut DbOpsData> {
+        self.0.as_mut().internal_err(|| "DbSyncOps has been poisoned by a dropped transaction.")
+    }
+    
+    /// Executes a SQL query with unnamed parameters.
+    pub fn execute(
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
+    ) -> Result<usize> {
+        self.get_ops()?.execute(sql.into(), params)
+    }
+    /// Executes a SQL query with no parameters.
+    pub fn execute_nullary(&mut self, sql: impl Into<StringWrapper>) -> Result<usize> {
+        self.get_ops()?.execute_named(sql.into(), &[] as &[()])
+    }
+    /// Executes a SQL query with named parameters.
+    pub fn execute_named(
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
+    ) -> Result<usize> {
+        self.get_ops()?.execute_named(sql.into(), params)
+    }
+    /// Executes multiple SQL statements.
+    pub fn execute_batch(&mut self, sql: impl Into<StringWrapper>) -> Result<()> {
+        self.get_ops()?.execute_batch(sql.into())
+    }
+
+    /// Queries a row of the SQL statements with unnamed parameters.
+    pub fn query_row<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
+    ) -> Result<Option<T>> {
+        self.get_ops()?.query_row(sql.into(), params)
+    }
+    /// Queries a row of the SQL statements with no parameters.
+    pub fn query_row_nullary<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<StringWrapper>,
+    ) -> Result<Option<T>> {
+        self.get_ops()?.query_row(sql.into(), &[] as &[()])
+    }
+    /// Queries a row of the SQL statements with named parameters.
+    pub fn query_row_named<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
+    ) -> Result<Option<T>> {
+        self.get_ops()?.query_row_named(sql.into(), params)
+    }
+
+    /// Queries the results of SQL statements with unnamed parameters.
+    pub fn query_vec<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
+    ) -> Result<Vec<T>> {
+        self.get_ops()?.query_vec(sql.into(), params)
+    }
+    /// Queries the results of SQL statements with no parameters.
+    pub fn query_vec_nullary<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<StringWrapper>
+    ) -> Result<Vec<T>> {
+        self.get_ops()?.query_vec(sql.into(), &[] as &[()])
+    }
+    /// Queries the results of SQL statements with named parameters.
+    pub fn query_vec_named<T: DeserializeOwned + Send + 'static>(
+        &mut self, sql: impl Into<StringWrapper>, params: impl Serialize + Send + 'static,
+    ) -> Result<Vec<T>> {
+        self.get_ops()?.query_vec_named(sql.into(), params)
+    }
+}
+
+/// A connection to the database.
+pub struct DbSyncConnection {
+    ops: DbSyncOps,
+}
+impl Deref for DbSyncConnection {
+    type Target = DbSyncOps;
+    fn deref(&self) -> &Self::Target {
+        &self.ops
+    }
+}
+impl DerefMut for DbSyncConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ops
+    }
+}
+impl DbSyncConnection {
+    /// Checkpoints the database, dumping the write-ahead log to disk.
+    pub fn checkpoint(&mut self) -> Result<()> {
+        self.ops.execute_batch("PRAGMA wal_checkpoint(RESTART);")
+    }
+
+    /// Starts a new deferred transaction.
+    ///
+    /// The transaction is normally rolled back when it is dropped. If you want to commit the
+    /// transaction, you must call [`commit`](`DbTransaction::commit`).
+    pub fn transaction(&mut self) -> Result<DbSyncTransaction<'_>> {
+        self.transaction_with_type(TransactionType::Deferred)
+    }
+
+    /// Starts a new transaction of the given type.
+    ///
+    /// The transaction is normally rolled back when it is dropped. If you want to commit the
+    /// transaction, you must call [`commit`](`DbTransaction::commit`).
+    pub fn transaction_with_type(
+        &mut self, t: TransactionType,
+    ) -> Result<DbSyncTransaction<'_>> {
+        self.ops.get_ops()?.begin_transaction(t)?;
+        let ops = DbSyncOps(self.ops.0.take());
+        Ok(DbSyncTransaction {
+            parent: self,
+            ops,
+        })
+    }
+}
+
+pub struct DbSyncTransaction<'a> {
+    parent: &'a mut DbSyncConnection,
+    ops: DbSyncOps,
+}
+impl <'a> Deref for DbSyncTransaction<'a> {
+    type Target = DbSyncOps;
+    fn deref(&self) -> &Self::Target {
+        &self.ops
+    }
+}
+impl <'a> DerefMut for DbSyncTransaction<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ops
+    }
+}
+impl <'a> DbSyncTransaction<'a> {
+    /// Commits the transaction.
+    pub fn commit(mut self) -> Result<()> {
+        self.ops.get_ops()?.commit_transaction()
+    }
+    /// Rolls back the transaction.
+    pub fn rollback(mut self) -> Result<()> {
+        self.ops.get_ops()?.rollback_transaction()
+    }
+}
+impl <'a> Drop for DbSyncTransaction<'a> {
+    fn drop(&mut self) {
+        self.ops.get_ops().unwrap().transaction_dropped();
+        self.parent.ops.0 = self.ops.0.take();
+    }
+}
+
 /// Manages connections to the database.
 #[derive(Clone)]
 pub struct Database {
@@ -426,23 +574,33 @@ impl Database {
         })));
     }
 
-    pub async fn connect(&self) -> Result<DbConnection> {
+    async fn make_ops(&self) -> Result<(DbOpsData, Arc<Handle>)> {
         let mut conn_handle = self.pool.get().await?;
         let conn = conn_handle.take();
         let handle = conn.handle.clone();
+        Ok((DbOpsData {
+            conn_handle: Some(conn_handle),
+            conn,
+            is_begin_transaction: false,
+            is_begin_commit: false,
+            is_in_transaction: false,
+            is_dead: false,
+        }, handle))
+    }
+
+    pub async fn connect(&self) -> Result<DbConnection> {
+        let (inner, handle) = self.make_ops().await?;
         Ok(DbConnection {
             ops: DbOps(BlockingWrapper {
-                inner: Some(Box::new(DbOpsData {
-                    conn_handle: Some(conn_handle),
-                    conn,
-                    is_begin_transaction: false,
-                    is_begin_commit: false,
-                    is_in_transaction: false,
-                    is_dead: false,
-                })),
+                inner: Some(Box::new(inner)),
                 handle,
             }),
         })
+    }
+    pub fn connect_sync(&self) -> Result<DbSyncConnection> {
+        let handle = Handle::current();
+        let (inner, _) = handle.block_on(self.make_ops())?;
+        Ok(DbSyncConnection { ops: DbSyncOps(Some(inner)) })
     }
 }
 
@@ -451,11 +609,18 @@ impl Database {
 pub trait SylphieDatabaseHandlerExt {
     /// Connects to the database.
     async fn connect_db(&self) -> Result<DbConnection>;
+
+    /// Connects to the database synchronously.
+    fn connect_db_sync(&self) -> Result<DbSyncConnection>;
 }
 #[async_trait]
 impl <E: Events> SylphieDatabaseHandlerExt for Handler<E> {
     async fn connect_db(&self) -> Result<DbConnection> {
         self.get_service::<Database>().connect().await
+    }
+
+    fn connect_db_sync(&self) -> Result<DbSyncConnection> {
+        self.get_service::<Database>().connect_sync()
     }
 }
 

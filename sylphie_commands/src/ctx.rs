@@ -1,14 +1,16 @@
+use async_trait::*;
 use crate::raw_args::*;
-use futures::future::BoxFuture;
 use static_events::prelude_async::*;
 use std::any::Any;
 use std::sync::Arc;
-use sylphie_core::core::SylphieEvents;
-use sylphie_core::errors::*;
-use sylphie_core::module::Module;
+use sylphie_core::prelude::*;
 
 /// The implementation of a command context.
+#[async_trait]
 pub trait CommandCtxImpl: Sync + Send + 'static {
+    /// Returns the scopes this event occured in, in order from most to least specific.
+    fn scopes(&self) -> &[Scope];
+
     /// Controls the way the arguments to commands in this context are parsed.
     fn args_parsing_options(&self) -> ArgParsingOptions {
         ArgParsingOptions::default()
@@ -20,9 +22,7 @@ pub trait CommandCtxImpl: Sync + Send + 'static {
     fn raw_message(&self) -> &str;
 
     /// Responds to the user with a given string.
-    fn respond<'a>(
-        &'a self, target: &'a Handler<impl Events>, msg: &'a str,
-    ) -> BoxFuture<'a, Result<()>>;
+    async fn respond<E: Events>(&self, target: &Handler<E>, msg: &str) -> Result<()>;
 }
 
 /// An argument to a command.
@@ -97,6 +97,11 @@ impl <E: Events> CommandCtx<E> {
         }
     }
 
+    /// Returns the scopes this event occured in, in order from most to least specific.
+    pub fn scopes(&self) -> &[Scope] {
+        self.0.ctx_impl.scopes()
+    }
+
     /// Responds to the user with a given string.
     pub async fn respond(&self, msg: &str) -> Result<()> {
         self.0.ctx_impl.respond(&self.0.handle, msg).await
@@ -109,17 +114,21 @@ impl <E: Events> Clone for CommandCtx<E> {
 }
 
 /// An object-safe wrapper around [`CommandCtxImpl`].
+#[async_trait]
 trait CommandCtxImplWrapper<E: Events>: Sync + Send + 'static {
     fn as_any(&self) -> &dyn Any;
     fn raw_message(&self) -> &str;
 
-    fn respond<'a>(&'a self, target: &'a Handler<E>, msg: &'a str) -> BoxFuture<'a, Result<()>>;
+    fn scopes(&self) -> &[Scope];
+    async fn respond(&self, target: &Handler<E>, msg: &str) -> Result<()>;
 }
+#[async_trait]
 impl <E: Events, T: CommandCtxImpl> CommandCtxImplWrapper<E> for T {
     fn as_any(&self) -> &dyn Any { self }
     fn raw_message(&self) -> &str { self.raw_message() }
 
-    fn respond<'a>(&'a self, target: &'a Handler<E>, msg: &'a str) -> BoxFuture<'a, Result<()>> {
-        self.respond(target, msg)
+    fn scopes(&self) -> &[Scope] { self.scopes() }
+    async fn respond(&self, target: &Handler<E>, msg: &str) -> Result<()> {
+        self.respond(target, msg).await
     }
 }

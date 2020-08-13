@@ -33,6 +33,9 @@ pub struct MyModule {
 impl MyModule {
     #[command]
     async fn cmd_test(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
+        for (i, scope) in ctx.scopes().iter().enumerate() {
+            ctx.respond(&format!("Scope #{}: {:?}", i, scope)).await?;
+        }
         for arg in 0..ctx.args_count() {
             ctx.respond(&format!("Arg #{}: {:?}", arg, ctx.arg(arg).text)).await?;
         }

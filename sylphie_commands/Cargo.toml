@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 arc-swap = "0.4.6"
+async-trait = "0.1.36"
 derive_setters = "0.1.4"
 enumset = "1.0.0"
 futures = "0.3.0"
