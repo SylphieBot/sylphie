@@ -2,8 +2,8 @@
 
 use arc_swap::ArcSwapOption;
 use crate::errors::*;
+use crate::global_instance::InstanceScopeGuard;
 use crate::module::CrateMetadata;
-use crate::utils::InstanceScopeGuard;
 use parking_lot::Mutex;
 use static_events::prelude_async::*;
 use std::path::PathBuf;

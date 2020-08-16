@@ -62,10 +62,10 @@ impl MyModule {
     async fn cmd_test_kvs(
         &self, ctx: &CommandCtx<impl Events>, key: String, val: String,
     ) -> Result<()> {
-        let cur = self.kvs.get(ctx.handler(), &SimpleSerialize(key.clone())).await?;
+        let cur = self.kvs.get(ctx.handler(), SimpleSerialize(key.clone())).await?;
         ctx.respond(&format!("Current value for {}: {:?}", key, cur)).await?;
         self.kvs.set(
-            ctx.handler(), &SimpleSerialize(key.clone()), &SimpleSerialize(val.clone()),
+            ctx.handler(), SimpleSerialize(key.clone()), SimpleSerialize(val.clone()),
         ).await?;
         ctx.respond(&format!("New     value for {}: {}", key, val)).await?;
         Ok(())

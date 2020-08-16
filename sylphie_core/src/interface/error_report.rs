@@ -2,8 +2,8 @@
 
 use backtrace::Backtrace;
 use crate::errors::*;
+use crate::global_instance::*;
 use crate::interface::InterfaceShared;
-use crate::utils::*;
 use chrono::Utc;
 use lazy_static::*;
 use parking_lot::Once;

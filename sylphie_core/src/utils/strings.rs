@@ -1,85 +1,11 @@
-//! Various utility types that are helpful in constructing Sylphie modules.
-
-use arc_swap::{ArcSwapOption, Guard as ArcSwapGuard};
+use crate::utils::cache::*;
+use lazy_static::*;
 use serde::*;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering, fence};
-
-/// A helper class for a global variable that is set during the lifetime of the bot.
-///
-/// This is mainly for internal use, but is provided here in case it is useful.
-pub struct GlobalInstance<T: Sync + Send + 'static> {
-    is_active: AtomicBool,
-    contents: ArcSwapOption<T>,
-}
-impl <T: Sync + Send + 'static> GlobalInstance<T> {
-    /// Creates a global instance container.
-    pub fn new() -> Self {
-        GlobalInstance {
-            is_active: AtomicBool::new(false),
-            contents: ArcSwapOption::new(None),
-        }
-    }
-
-    /// Sets the current instance and returns a guard that unsets it when dropped.
-    pub fn set_instance(&'static self, value: T) -> InstanceScopeGuard<T> {
-        if !self.is_active.compare_and_swap(false, true, AtomicOrdering::SeqCst) {
-            fence(AtomicOrdering::SeqCst);
-            self.contents.store(Some(Arc::new(value)));
-            InstanceScopeGuard {
-                instance: self,
-            }
-        } else {
-            panic!("Another instance of Sylphie is already running.");
-        }
-    }
-    fn unset_instance(&'static self) {
-        self.contents.store(None);
-    }
-
-    /// Returns a guard that contains the current instance.
-    ///
-    /// Note that if none exists, it will panic when you deref the instance, not when this method
-    /// is called.
-    pub fn load(&'static self) -> InstanceGuard<T> {
-        InstanceGuard {
-            inner_guard: self.contents.load(),
-        }
-    }
-}
-
-/// A guard for [`GlobalInstance::set_instance`].
-pub struct InstanceGuard<T: Sync + Send + 'static> {
-    inner_guard: ArcSwapGuard<'static, Option<Arc<T>>>,
-}
-impl <T: Sync + Send + 'static> InstanceGuard<T> {
-    /// Returns whether an instance is actually loaded.
-    pub fn is_loaded(&self) -> bool {
-        self.inner_guard.is_some()
-    }
-}
-impl <T: Sync + Send + 'static> Deref for InstanceGuard<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &**self.inner_guard.as_ref().expect("No instance of Sylphie is running.")
-    }
-}
-
-/// A guard for [`GlobalInstance::set_instance`].
-pub struct InstanceScopeGuard<T: Sync + Send + 'static> {
-    instance: &'static GlobalInstance<T>,
-}
-impl <T: Sync + Send + 'static> Drop for InstanceScopeGuard<T> {
-    fn drop(&mut self) {
-        self.instance.unset_instance();
-        fence(AtomicOrdering::SeqCst);
-        self.instance.is_active.store(false, AtomicOrdering::SeqCst);
-    }
-}
 
 /// A wrapper enum for storing strings in static contexts efficiently.
 #[derive(Clone)]
@@ -181,5 +107,52 @@ impl Serialize for StringWrapper {
 impl <'de> Deserialize<'de> for StringWrapper {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
         Ok(StringWrapper::Owned(String::deserialize(deserializer)?.into()))
+    }
+}
+
+/// A helper trait that exists to help intern strings.
+pub trait InternString {
+    type InternedType;
+    fn intern(&self) -> Self::InternedType;
+}
+
+lazy_static! {
+    static ref INTERN_CACHE: LruCache<Arc<str>, Arc<str>> = LruCache::new(1024);
+}
+impl InternString for Arc<str> {
+    type InternedType = Arc<str>;
+    fn intern(&self) -> Self::InternedType {
+        INTERN_CACHE.cached(self.clone(), || Ok(self.clone())).unwrap()
+    }
+}
+impl <'a> InternString for &'a str {
+    type InternedType = Arc<str>;
+    fn intern(&self) -> Self::InternedType {
+        let arc: Arc<str> = String::from(*self).into();
+        arc.intern()
+    }
+}
+impl InternString for String {
+    type InternedType = Arc<str>;
+    fn intern(&self) -> Self::InternedType {
+        let arc: Arc<str> = String::from(self.as_str()).into();
+        arc.intern()
+    }
+}
+impl InternString for Box<str> {
+    type InternedType = Arc<str>;
+    fn intern(&self) -> Self::InternedType {
+        let arc: Arc<str> = String::from(&**self).into();
+        arc.intern()
+    }
+}
+impl InternString for StringWrapper {
+    type InternedType = StringWrapper;
+    fn intern(&self) -> Self::InternedType {
+        match self {
+            StringWrapper::Static(s) => StringWrapper::Static(s),
+            StringWrapper::Owned(s) => StringWrapper::Shared(s.intern()),
+            StringWrapper::Shared(s) => StringWrapper::Shared(s.intern()),
+        }
     }
 }

@@ -1,4 +1,4 @@
 CREATE TABLE sylphie_db_interner (
-    name TEXT PRIMARY KEY,
-    int_id INTEGER UNIQUE
+    name TEXT NOT NULL PRIMARY KEY,
+    int_id INTEGER UNIQUE NOT NULL
 ) WITHOUT ROWID;

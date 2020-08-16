@@ -32,7 +32,7 @@ impl SerializationFormat for CborFormat {
 }
 
 /// A trait for types that can be serialized into database columns.
-pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + 'static {
+pub trait DbSerializable: Clone + Sized + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The serialization format that will be used for this trait.
     type Format: SerializationFormat;
 
@@ -58,11 +58,6 @@ pub trait DbSerializable: Sized + Serialize + DeserializeOwned + Send + Sync + '
     }
 }
 
-impl DbSerializable for StringWrapper {
-    type Format = BincodeFormat;
-    const ID: &'static str = "sylphie_core::utils::StringWrapper";
-    const SCHEMA_VERSION: u32 = 0;
-}
 impl DbSerializable for ScopeArgs {
     type Format = BincodeFormat;
     const ID: &'static str = "sylphie_core::scopes::ScopeArgs";
@@ -74,6 +69,11 @@ impl DbSerializable for Scope {
     const SCHEMA_VERSION: u32 = 0;
 }
 
+impl DbSerializable for StringWrapper {
+    type Format = BincodeFormat;
+    const ID: &'static str = "std::string::String"; // fully compatible with String
+    const SCHEMA_VERSION: u32 = 0;
+}
 impl DbSerializable for String {
     type Format = BincodeFormat;
     const ID: &'static str = "std::string::String";
@@ -90,13 +90,15 @@ impl DbSerializable for String {
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash, Default)]
 #[derive(Serialize)]
 #[serde(transparent)]
-pub struct SimpleSerialize<T: Serialize + DeserializeOwned + Send + Sync + 'static>(pub T);
-impl <T: Serialize + DeserializeOwned + Send + Sync + 'static> From<T> for SimpleSerialize<T> {
+pub struct SimpleSerialize<T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static>(pub T);
+impl <T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static>
+    From<T> for SimpleSerialize<T>
+{
     fn from(t: T) -> Self {
         SimpleSerialize(t)
     }
 }
-impl <T: Serialize + DeserializeOwned + Send + Sync + 'static>
+impl <T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static>
     DbSerializable for SimpleSerialize<T>
 {
     type Format = BincodeFormat;
@@ -104,7 +106,7 @@ impl <T: Serialize + DeserializeOwned + Send + Sync + 'static>
     const ID: &'static str = "simple_serialize";
     const SCHEMA_VERSION: u32 = 0;
 }
-impl <'de, T: Serialize + DeserializeOwned + Send + Sync + 'static, >
+impl <'de, T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static>
     Deserialize<'de> for SimpleSerialize<T>
 {
     fn deserialize<D>(deser: D) -> StdResult<Self, D::Error> where D: Deserializer<'de> {

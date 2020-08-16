@@ -1,7 +1,7 @@
 use crate::errors::*;
+use crate::global_instance::*;
 use crate::interface::*;
 use crate::module::{Module, ModuleManager};
-use crate::utils::GlobalInstance;
 use fs2::*;
 use lazy_static::*;
 use static_events::prelude_async::*;

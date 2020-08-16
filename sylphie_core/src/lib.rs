@@ -7,6 +7,7 @@
 pub mod errors; // this goes before to make sure macros resolve
 
 pub mod core;
+mod global_instance;
 pub mod interface;
 pub mod module;
 pub mod scopes;

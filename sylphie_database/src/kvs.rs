@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use sylphie_core::derives::*;
 use sylphie_core::prelude::*;
+use sylphie_core::utils::{LockSet, LruCache};
 use std::hash::Hash;
 
 mod private {
@@ -346,8 +347,10 @@ impl KvsStoreQueries {
 pub struct BaseKvsStore<K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> {
     #[module_info] info: ModuleInfo,
     data: ArcSwapOption<BaseKvsStoreInfo>,
-    // TODO: Actual proper caching of some sort.
-    phantom: PhantomData<(fn(& &mut T), K, V)>,
+    // TODO: Figure out a better way to do the LruCache capacity.
+    #[init_with { LruCache::new(1024) }] cache: LruCache<K, Option<V>>,
+    lock_set: LockSet<K>,
+    phantom: PhantomData<fn(& &mut T)>,
 }
 #[module_impl]
 impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore<K, V, T> {
@@ -373,20 +376,33 @@ impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore
         ))));
     }
 
-    pub async fn get(&self, target: &Handler<impl Events>, k: &K) -> Result<Option<V>> {
+    pub async fn get(&self, target: &Handler<impl Events>, k: K) -> Result<Option<V>> {
+        let _guard = self.lock_set.lock(k.clone()).await;
+
         let data = self.data.load();
         let data = data.as_ref().expect("BaseKvsStore not initialized??");
-        data.queries.load_value(&mut target.connect_db().await?, k, data, !T::IS_TRANSIENT).await
+        self.cache.cached_async(
+            k.clone(),
+            data.queries.load_value(&mut target.connect_db().await?, &k, data, !T::IS_TRANSIENT)
+        ).await
     }
-    pub async fn set(&self, target: &Handler<impl Events>, k: &K, v: &V) -> Result<()> {
+    pub async fn set(&self, target: &Handler<impl Events>, k: K, v: V) -> Result<()> {
+        let _guard = self.lock_set.lock(k.clone()).await;
+
         let data = self.data.load();
         let data = data.as_ref().expect("BaseKvsStore not initialized??");
-        data.queries.store_value(&mut target.connect_db().await?, k, v, data.value_id).await
+        data.queries.store_value(&mut target.connect_db().await?, &k, &v, data.value_id).await?;
+        self.cache.insert(k, Some(v));
+        Ok(())
     }
-    pub async fn remove(&self, target: &Handler<impl Events>, k: &K) -> Result<()> {
+    pub async fn remove(&self, target: &Handler<impl Events>, k: K) -> Result<()> {
+        let _guard = self.lock_set.lock(k.clone()).await;
+
         let data = self.data.load();
         let data = data.as_ref().expect("BaseKvsStore not initialized??");
-        data.queries.delete_value(&mut target.connect_db().await?, k).await
+        data.queries.delete_value(&mut target.connect_db().await?, &k).await?;
+        self.cache.insert(k, None);
+        Ok(())
     }
 }
 
