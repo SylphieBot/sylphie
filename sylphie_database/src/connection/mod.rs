@@ -8,6 +8,7 @@ use std::path::{PathBuf, Path};
 use std::time;
 use std::sync::Arc;
 use sylphie_core::prelude::*;
+use sylphie_utils::strings::StringWrapper;
 use tokio::runtime::Handle;
 
 mod pool;

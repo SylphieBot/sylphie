@@ -1,7 +1,7 @@
-use crate::errors::*;
-use crate::utils::strings::InternString;
+use crate::strings::InternString;
 use fxhash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+use sylphie_core::errors::*;
 
 /// A trait for items that can be disambiguated between modules.
 pub trait CanDisambiguate {

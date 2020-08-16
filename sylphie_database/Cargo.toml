@@ -26,3 +26,4 @@ tokio = { version = "0.2.21", features = ["full"] }
 tracing = { version = "0.1.10", features = ["log"] }
 
 sylphie_core = { version = "0.1.0", path = "../sylphie_core" }
+sylphie_utils = { version = "0.1.0", path = "../sylphie_utils" }

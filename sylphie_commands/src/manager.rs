@@ -4,7 +4,7 @@ use crate::ctx::CommandCtx;
 use static_events::prelude_async::*;
 use std::sync::Arc;
 use sylphie_core::errors::*;
-use sylphie_core::utils::{CanDisambiguate, DisambiguatedSet, Disambiguated};
+use sylphie_utils::disambiguate::{CanDisambiguate, DisambiguatedSet, Disambiguated};
 
 /// The event used to register commands.
 #[derive(Debug, Default)]

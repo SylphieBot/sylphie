@@ -1,4 +1,4 @@
-use crate::utils::cache::*;
+use crate::cache::*;
 use lazy_static::*;
 use serde::*;
 use std::cmp::Ordering;

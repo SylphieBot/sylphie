@@ -5,6 +5,7 @@ members = [
     "sylphie_core",
     "sylphie_database",
     "sylphie_derive",
+    "sylphie_utils",
 ]
 
 [profile.release]

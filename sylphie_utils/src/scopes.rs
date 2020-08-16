@@ -1,6 +1,6 @@
 //! Types used to specify particular contexts such as users, members or servers.
 
-use crate::utils::StringWrapper;
+use crate::strings::StringWrapper;
 use serde::*;
 
 /// The data contained in a scope.

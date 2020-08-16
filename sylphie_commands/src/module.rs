@@ -7,6 +7,8 @@ use sylphie_core::core::{SylphieEvents, InitEvent};
 use sylphie_core::derives::*;
 use sylphie_core::interface::{TerminalCommandEvent, SetupLoggerEvent};
 use sylphie_core::prelude::*;
+use sylphie_utils::scopes::*;
+use sylphie_utils::strings::StringWrapper;
 
 /// The module containing the implementation of Sylphie commands.
 #[derive(Module)]

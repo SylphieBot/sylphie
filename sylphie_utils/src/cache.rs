@@ -1,5 +1,4 @@
 use arc_swap::*;
-use crate::errors::*;
 use dashmap::DashMap;
 use futures::Future;
 use fxhash::FxBuildHasher;
@@ -7,6 +6,7 @@ use std::hash::Hash;
 use std::time::Instant;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use sylphie_core::errors::*;
 
 struct LruEntry<K, V> {
     key: K,

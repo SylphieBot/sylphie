@@ -3,8 +3,6 @@ pub use sylphie_core::errors;
 pub use sylphie_core::interface;
 pub use sylphie_core::timer;
 pub use sylphie_core::module;
-pub use sylphie_core::scopes;
-pub use sylphie_core::utils;
 
 pub mod commands {
     pub use sylphie_commands::{commands, ctx, manager};
@@ -13,6 +11,8 @@ pub mod commands {
 pub mod database {
     pub use sylphie_database::{connection, kvs, migrations, serializable};
 }
+
+pub use sylphie_utils as utils;
 
 #[macro_export]
 macro_rules! sylphie_root_module {
@@ -68,6 +68,8 @@ pub mod prelude {
     pub use crate::sylphie_root_module;
     pub use sylphie_commands::prelude::*;
     pub use sylphie_core::prelude::*;
+    pub use sylphie_utils::scopes::{Scope, ScopeArgs};
+    pub use sylphie_utils::strings::StringWrapper;
 }
 
 /// Exports the derives used for this crate.

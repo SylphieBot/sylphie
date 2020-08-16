@@ -22,12 +22,9 @@ impl <K: Clone + Hash + Eq + Send + Sync + 'static> LockSet<K> {
 
     /// Locks a given key, if it is not already locked.
     pub fn try_lock(&self, key: K) -> Option<LockSetGuard<'_, K>> {
-        let mut entry = self.locks.entry(key.clone()).or_default();
+        let entry = self.locks.entry(key.clone()).or_default();
         if entry.is_empty() {
-            Some(LockSetGuard {
-                key: key,
-                parent: self,
-            })
+            Some(LockSetGuard { key, parent: self })
         } else {
             None
         }

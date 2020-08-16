@@ -10,7 +10,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use sylphie_core::derives::*;
 use sylphie_core::prelude::*;
-use sylphie_core::utils::{LockSet, LruCache};
+use sylphie_utils::cache::LruCache;
+use sylphie_utils::locks::LockSet;
 use std::hash::Hash;
 
 mod private {

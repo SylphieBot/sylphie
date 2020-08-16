@@ -4,6 +4,7 @@ use static_events::prelude_async::*;
 use std::any::Any;
 use std::sync::Arc;
 use sylphie_core::prelude::*;
+use sylphie_utils::scopes::*;
 
 /// The implementation of a command context.
 #[async_trait]

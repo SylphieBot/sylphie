@@ -1,7 +1,9 @@
+use bincode::Options;
 use serde::*;
 use serde::de::DeserializeOwned;
 use sylphie_core::prelude::*;
-use bincode::Options;
+use sylphie_utils::scopes::*;
+use sylphie_utils::strings::StringWrapper;
 
 /// A format that can be used to serialize database values.
 pub trait SerializationFormat {
