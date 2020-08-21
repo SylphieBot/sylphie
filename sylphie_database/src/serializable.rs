@@ -1,6 +1,8 @@
 use bincode::Options;
 use serde::*;
 use serde::de::DeserializeOwned;
+use serde_bytes::ByteBuf;
+use std::any::Any;
 use sylphie_core::prelude::*;
 use sylphie_utils::scopes::*;
 use sylphie_utils::strings::StringWrapper;
@@ -58,31 +60,48 @@ pub trait DbSerializable: Clone + Sized + Serialize + DeserializeOwned + Send + 
     ) -> Result<Self> {
         bail!("Migration not supported.")
     }
+
+    /// Downcasts this to a concrete type. This is used for some more fancy formatters.
+    fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        let as_any: &dyn Any = self;
+        as_any.downcast_ref::<T>()
+    }
 }
 
-impl DbSerializable for ScopeArgs {
-    type Format = BincodeFormat;
-    const ID: &'static str = "sylphie_core::scopes::ScopeArgs";
-    const SCHEMA_VERSION: u32 = 0;
+macro_rules! basic_defs {
+    ($($ty:ty => $id:literal),* $(,)?) => {$(
+        impl DbSerializable for $ty {
+            type Format = BincodeFormat;
+            const ID: &'static str = $id;
+            const SCHEMA_VERSION: u32 = 0;
+        }
+    )*};
 }
-impl DbSerializable for Scope {
-    type Format = BincodeFormat;
-    const ID: &'static str = "sylphie_core::scopes::Scope";
-    const SCHEMA_VERSION: u32 = 0;
-}
+basic_defs! {
+    // strings
+    String => "std::string::String",
+    StringWrapper => "std::string::String",
+    // byte buffers
+    Vec<u8> => "std::vec::Vec<u8>",
+    ByteBuf => "std::vec::Vec<u8>",
+    // integers
+    u8 => "u8",
+    u16 => "uvarint",
+    u32 => "uvarint",
+    u64 => "uvarint",
+    u128 => "uvarint",
+    usize => "uvarint",
+    i8 => "i8",
+    i16 => "ivarint",
+    i32 => "ivarint",
+    i64 => "ivarint",
+    i128 => "ivarint",
+    isize => "ivarint",
 
-impl DbSerializable for StringWrapper {
-    type Format = BincodeFormat;
-    const ID: &'static str = "std::string::String"; // fully compatible with String
-    const SCHEMA_VERSION: u32 = 0;
+    // scope definitions
+    Scope => "sylphie_utils::scopes::Scope",
+    ScopeArgs => "sylphie_utils::scopes::ScopeArgs",
 }
-impl DbSerializable for String {
-    type Format = BincodeFormat;
-    const ID: &'static str = "std::string::String";
-    const SCHEMA_VERSION: u32 = 0;
-}
-
-// TODO: DbSerializable for integer keys.
 
 /// A simple wrapper that implements [`DbSerializable`] over any compatible type.
 ///
