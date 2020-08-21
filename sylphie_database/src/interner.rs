@@ -4,7 +4,10 @@ use crate::migrations::*;
 use fxhash::{FxHashMap, FxHashSet};
 use static_events::prelude_async::*;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use sylphie_core::prelude::*;
+use sylphie_utils::cache::LruCache;
+use sylphie_utils::locks::LockSet;
 
 static INTERNER_MIGRATIONS: MigrationData = MigrationData {
     migration_id: "interner b7a62621-ae52-4247-bda6-49d297de20d9",
@@ -15,6 +18,12 @@ static INTERNER_MIGRATIONS: MigrationData = MigrationData {
         migration_script!(0, 1, "sql/interner_0_to_1.sql"),
     ],
 };
+
+struct InternerHive {
+    hive_id: u32,
+    //cache: LruCache<>,
+    max_value: AtomicUsize,
+}
 
 #[derive(Default)]
 struct StringInternerData {

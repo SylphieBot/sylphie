@@ -61,7 +61,6 @@ pub mod __macro_export {
     }
 }
 
-
 /// A convenience module containing common imports that are useful throughout Sylphie-based code.
 pub mod prelude {
     pub use crate::derives::*;

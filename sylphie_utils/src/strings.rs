@@ -1,4 +1,5 @@
 use crate::cache::*;
+use crate::scopes::*;
 use lazy_static::*;
 use serde::*;
 use std::cmp::Ordering;
@@ -13,6 +14,8 @@ pub enum StringWrapper {
     Static(&'static str),
     Owned(Box<str>),
     Shared(Arc<str>),
+    /// An interned string. This is an optimization to avoid excessive cache lookups.
+    Interned(Arc<str>),
 }
 impl StringWrapper {
     /// Clones this string, potentially rewriting this wrapper into a shared one.
@@ -25,6 +28,7 @@ impl StringWrapper {
                 StringWrapper::Shared(o)
             }
             StringWrapper::Shared(s) => StringWrapper::Shared((*s).clone()),
+            StringWrapper::Interned(s) => StringWrapper::Shared((*s).clone()),
         }
     }
 
@@ -33,7 +37,8 @@ impl StringWrapper {
         match self {
             StringWrapper::Static(s) => s,
             StringWrapper::Owned(s) => &s,
-            StringWrapper::Shared(s) => &s
+            StringWrapper::Shared(s) => &s,
+            StringWrapper::Interned(s) => &s,
         }
     }
 }
@@ -151,8 +156,28 @@ impl InternString for StringWrapper {
     fn intern(&self) -> Self::InternedType {
         match self {
             StringWrapper::Static(s) => StringWrapper::Static(s),
-            StringWrapper::Owned(s) => StringWrapper::Shared(s.intern()),
-            StringWrapper::Shared(s) => StringWrapper::Shared(s.intern()),
+            StringWrapper::Owned(s) => StringWrapper::Interned(s.intern()),
+            StringWrapper::Shared(s) => StringWrapper::Interned(s.intern()),
+            StringWrapper::Interned(s) => StringWrapper::Interned(s.clone()),
+        }
+    }
+}
+
+impl InternString for ScopeArgs {
+    type InternedType = ScopeArgs;
+    fn intern(&self) -> Self::InternedType {
+        match self {
+            ScopeArgs::String(s) => ScopeArgs::String(s.intern()),
+            x => x.clone(),
+        }
+    }
+}
+impl InternString for Scope {
+    type InternedType = Scope;
+    fn intern(&self) -> Self::InternedType {
+        Scope {
+            scope_type: self.scope_type.intern(),
+            args: self.args.intern(),
         }
     }
 }

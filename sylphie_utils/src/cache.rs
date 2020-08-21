@@ -74,7 +74,7 @@ impl <
         None
     }
 
-    fn try_insert_loop(&self, key: K, entry: Option<Arc<LruEntry<K, V>>>) {
+    fn try_insert_loop(&self, key: K, entry: Option<Arc<LruEntry<K, V>>>, do_replace: bool) {
         let lock = self.data.load();
 
         // check if we already have a cache line for this item
@@ -85,6 +85,14 @@ impl <
             let line_contents = lock.cache_data[line_no].load();
             if let Some(line) = &*line_contents {
                 if &line.key == &key {
+                    // if we aren't replacing things, we've found the key now.
+                    // bail out early
+                    if !do_replace {
+                        return
+                    }
+
+                    // mark the line busy, touch the plru and prepare to set the cache item to
+                    // this line.
                     if !line.is_busy.compare_and_swap(false, true, Ordering::Relaxed) {
                         line.touch(lock.base_time);
                         Some(line_no)
@@ -100,18 +108,18 @@ impl <
         } else {
             None
         };
-        let (line_no, is_same) = match fixed_line_no {
+        let (line_no, already_exists) = match fixed_line_no {
             Some(line_no) => (line_no, true),
             None => (lock.lru.replace(), false),
         };
 
         // remove the lookup entry for the last thing to touch the cache
-        if !is_same {
+        if !already_exists {
             let line_contents = lock.cache_data[line_no].load();
             if let Some(line) = line_contents.as_ref() {
                 if line.is_busy.compare_and_swap(false, true, Ordering::Relaxed) {
                     // this is being replaced by something else, let's not touch it
-                    return self.try_insert_loop(key, entry);
+                    return self.try_insert_loop(key, entry, do_replace);
                 }
                 lock.key_lookup.remove(&line.key);
             }
@@ -120,13 +128,13 @@ impl <
         // put our new cache entry in the, well, cache
         lock.lru.touch(line_no);
         lock.cache_data[line_no].store(entry.clone());
-        if is_same {
+        if already_exists {
             entry.unwrap().is_busy.compare_and_swap(true, false, Ordering::Relaxed);
         } else {
             lock.key_lookup.insert(key, line_no);
         }
     }
-    fn insert_cache(&self, key: K, value: V) {
+    fn insert_cache(&self, key: K, value: V, do_replace: bool) {
         let entry = Arc::new(LruEntry {
             key: key.clone(),
             value: value.clone(),
@@ -134,7 +142,7 @@ impl <
             is_busy: Default::default(),
         });
         entry.touch(self.data.load().base_time);
-        self.try_insert_loop(key, Some(entry));
+        self.try_insert_loop(key, Some(entry), do_replace);
     }
     fn invalidate_cache(&self, key: &K) -> bool {
         let lock = self.data.load();
@@ -161,14 +169,14 @@ impl <
             Ok(v)
         } else {
             let value = make_new()?;
-            self.insert_cache(key, value.clone());
+            self.insert_cache(key, value.clone(), false);
             Ok(value)
         }
     }
 
     /// Inserts a value into the cache.
     pub fn insert(&self, key: K, value: V) {
-        self.insert_cache(key, value);
+        self.insert_cache(key, value, true);
     }
 
     /// Invalidates the cache for a given key.
@@ -186,7 +194,7 @@ impl <
             Ok(v)
         } else {
             let value = make_new.await?;
-            self.insert_cache(key, value.clone());
+            self.insert_cache(key, value.clone(), false);
             Ok(value)
         }
     }

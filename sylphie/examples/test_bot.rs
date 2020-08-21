@@ -26,7 +26,7 @@ pub struct MyModule {
     #[module_info] info: ModuleInfo,
     #[submodule] submod_a: TestModule,
     #[submodule] submod_b: TestModule,
-    #[submodule] kvs: BaseKvsStore<SimpleSerialize<String>, SimpleSerialize<String>, PersistentKvsType>,
+    #[submodule] kvs: BaseKvsStore<String, String, PersistentKvsType>,
 }
 
 #[module_impl]
@@ -59,15 +59,25 @@ impl MyModule {
     }
 
     #[command]
-    async fn cmd_test_kvs(
+    async fn cmd_kvs_set(
         &self, ctx: &CommandCtx<impl Events>, key: String, val: String,
     ) -> Result<()> {
-        let cur = self.kvs.get(ctx.handler(), SimpleSerialize(key.clone())).await?;
+        let cur = self.kvs.get(key.clone()).await?;
         ctx.respond(&format!("Current value for {}: {:?}", key, cur)).await?;
-        self.kvs.set(
-            ctx.handler(), SimpleSerialize(key.clone()), SimpleSerialize(val.clone()),
-        ).await?;
-        ctx.respond(&format!("New     value for {}: {}", key, val)).await?;
+        self.kvs.set(key.clone(), val.clone()).await?;
+        ctx.respond(&format!("New     value for {}: {:?}", key, val)).await?;
+        Ok(())
+    }
+
+    #[command]
+    async fn cmd_kvs_append(
+        &self, ctx: &CommandCtx<impl Events>, key: String, val: String,
+    ) -> Result<()> {
+        let mut lock = self.kvs.get_mut_default(key.clone()).await?;
+        ctx.respond(&format!("Current value for {}: {:?}", key, &*lock)).await?;
+        lock.push_str(&val);
+        ctx.respond(&format!("New     value for {}: {:?}", key, &*lock)).await?;
+        lock.commit().await?;
         Ok(())
     }
 }

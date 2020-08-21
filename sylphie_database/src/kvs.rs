@@ -6,13 +6,14 @@ use crate::serializable::*;
 use serde_bytes::ByteBuf;
 use static_events::prelude_async::*;
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use sylphie_core::derives::*;
 use sylphie_core::prelude::*;
 use sylphie_utils::cache::LruCache;
-use sylphie_utils::locks::LockSet;
-use std::hash::Hash;
+use sylphie_utils::locks::{LockSet, LockSetGuard};
 
 mod private {
     pub trait Sealed: 'static {
@@ -99,12 +100,38 @@ impl <'a> InitKvsEvent<'a> {
         Ok(())
     }
 
+    fn strip_to_alphanumeric(value: &str) -> String {
+        let mut str = String::new();
+        for char in value.chars() {
+            match char {
+                '0'..='9' | 'a'..='z' => str.push(char),
+                'A'..='Z' => str.push((char as u8 - b'A') as char),
+                _ => { }
+            }
+        }
+        str
+    }
     fn create_table_name(&self, module_name: &str) -> String {
+        let parsed_name: Vec<_> = module_name.split('.').collect();
+        let name_frag = match parsed_name.as_slice() {
+            &[name] => Self::strip_to_alphanumeric(name),
+            &[.., parent, name] => format!(
+                "{}_{}",
+                Self::strip_to_alphanumeric(parent),
+                Self::strip_to_alphanumeric(name),
+            ),
+            _ => unreachable!(),
+        };
+
         let mut unique_id = 0u32;
         loop {
             let hash = blake3::hash(format!("{}|{}", unique_id, module_name).as_bytes()).to_hex();
-            let hash = &hash.as_str()[0..16];
-            let table_name = format!("sylphie_db_kvsdata_{}", hash);
+            let hash = &hash.as_str()[0..4];
+            let table_name = format!(
+                "sylphie_db_{}_{}",
+                hash,
+                name_frag
+            );
             if !self.used_table_names.contains(&table_name) {
                 return table_name;
             }
@@ -185,8 +212,8 @@ struct InitKvsLate {
 simple_event!(InitKvsLate);
 
 static PERSISTENT_KVS_MIGRATIONS: MigrationData = MigrationData {
-    migration_id: "persistent ebc80f22-f8e8-4c0f-b09c-6fd12e3c853b",
-    migration_set_name: "persistent_kvs",
+    migration_id: "kvs persistent ebc80f22-f8e8-4c0f-b09c-6fd12e3c853b",
+    migration_set_name: "kvs_persistent",
     is_transient: false,
     target_version: 1,
     scripts: &[
@@ -194,8 +221,8 @@ static PERSISTENT_KVS_MIGRATIONS: MigrationData = MigrationData {
     ],
 };
 static TRANSIENT_KVS_MIGRATIONS: MigrationData = MigrationData {
-    migration_id: "transient e9031b35-e448-444d-b161-e75245b30bd8",
-    migration_set_name: "transient_kvs",
+    migration_id: "kvs transient e9031b35-e448-444d-b161-e75245b30bd8",
+    migration_set_name: "kvs_transient",
     is_transient: true,
     target_version: 1,
     scripts: &[
@@ -244,6 +271,7 @@ pub(crate) fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
 }
 
 struct BaseKvsStoreInfo {
+    db: Database,
     interner: StringInternerLock,
     value_id: u32,
     queries: KvsStoreQueries,
@@ -260,6 +288,7 @@ impl BaseKvsStoreInfo {
         let interner = target.get_service::<StringInterner>().lock();
         let value_id = interner.lookup_name(value_id);
         BaseKvsStoreInfo {
+            db: target.get_service::<Database>().clone(),
             interner,
             value_id,
             queries: KvsStoreQueries::new(&format!(
@@ -377,35 +406,162 @@ impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore
         ))));
     }
 
-    pub async fn get(&self, target: &Handler<impl Events>, k: K) -> Result<Option<V>> {
-        let _guard = self.lock_set.lock(k.clone()).await;
+    fn load_data(&self) -> Arc<BaseKvsStoreInfo> {
+        self.data.load().as_ref().expect("BaseKvsStore not yet initialized.").clone()
+    }
+    async fn connect_db(&self, data: &BaseKvsStoreInfo) -> Result<DbConnection> {
+        data.db.connect().await
+    }
 
-        let data = self.data.load();
-        let data = data.as_ref().expect("BaseKvsStore not initialized??");
-        self.cache.cached_async(
-            k.clone(),
-            data.queries.load_value(&mut target.connect_db().await?, &k, data, !T::IS_TRANSIENT)
+    async fn get_db(&self, data: &BaseKvsStoreInfo, k: K) -> Result<Option<V>> {
+        data.queries.load_value(
+            &mut self.connect_db(&data).await?, &k, &data, !T::IS_TRANSIENT,
         ).await
     }
-    pub async fn set(&self, target: &Handler<impl Events>, k: K, v: V) -> Result<()> {
-        let _guard = self.lock_set.lock(k.clone()).await;
-
-        let data = self.data.load();
-        let data = data.as_ref().expect("BaseKvsStore not initialized??");
-        data.queries.store_value(&mut target.connect_db().await?, &k, &v, data.value_id).await?;
+    async fn get_0(&self, data: &BaseKvsStoreInfo, k: K) -> Result<Option<V>> {
+        self.cache.cached_async(k.clone(), self.get_db(data, k)).await
+    }
+    async fn set_0(&self, data: &BaseKvsStoreInfo, k: K, v: V) -> Result<()> {
+        data.queries.store_value(&mut self.connect_db(&data).await?, &k, &v, data.value_id).await?;
         self.cache.insert(k, Some(v));
         Ok(())
     }
-    pub async fn remove(&self, target: &Handler<impl Events>, k: K) -> Result<()> {
-        let _guard = self.lock_set.lock(k.clone()).await;
-
-        let data = self.data.load();
-        let data = data.as_ref().expect("BaseKvsStore not initialized??");
-        data.queries.delete_value(&mut target.connect_db().await?, &k).await?;
+    async fn remove_0(&self, data: &BaseKvsStoreInfo, k: K) -> Result<()> {
+        data.queries.delete_value(&mut self.connect_db(&data).await?, &k).await?;
         self.cache.insert(k, None);
         Ok(())
+    }
+    async fn get_mut_0<'a>(
+        &'a self, guard: LockSetGuard<'a, K>, k: K, make_default: impl FnOnce() -> Result<V>,
+    ) -> Result<KvsMutGuard<'a, K, V, T>> {
+        let data = self.load_data();
+        let value = self.get_0(&data, k.clone()).await?;
+        Ok(KvsMutGuard {
+            parent: self,
+            _guard: guard,
+            key: k,
+            value: match value {
+                Some(v) => v,
+                None => make_default()?,
+            },
+            data,
+        })
+    }
+
+    /// Retrieves a value from a KVS store in the database.
+    pub async fn get(&self, k: K) -> Result<Option<V>> {
+        self.get_0(&self.load_data(), k).await
+    }
+
+    /// Stores a value from the KVS store in the database.
+    ///
+    /// If another task is already writing to this database, this function will temporarily block.
+    pub async fn set(&self, k: K, v: V) -> Result<()> {
+        let _guard = self.lock_set.lock(k.clone()).await;
+        self.set_0(&self.load_data(), k, v).await
+    }
+
+    /// Removes a value from the KVS store in the database.
+    ///
+    /// If another task is already writing to this database, this function will temporarily block.
+    pub async fn remove(&self, k: K) -> Result<()> {
+        let _guard = self.lock_set.lock(k.clone()).await;
+        self.remove_0(&self.load_data(), k).await
+    }
+
+    /// Returns a mutable handle to a value on the KVS store. If the value does not already exist,
+    /// it is initialized with [`Default::default`].
+    ///
+    /// If the value does not already exist, it is initialized with the given closure.
+    ///
+    /// If another task is already writing to this database, this function will temporarily block.
+    ///
+    /// You must call [`KvsMutGuard::commit`] to actually write the new changed value to the
+    /// database. All changes are lost if you simply drop the value.
+    pub async fn get_mut(
+        &self, k: K, default: impl FnOnce() -> Result<V>,
+    ) -> Result<KvsMutGuard<'_, K, V, T>> {
+        let guard = self.lock_set.lock(k.clone()).await;
+        self.get_mut_0(guard, k, default).await
+    }
+
+    /// Tries to return a mutable handle to a value on the KVS store. If another task is writing
+    /// to this key, this function will return `None`.
+    ///
+    /// If the value does not already exist, it is initialized with the given closure.
+    ///
+    /// You must call [`KvsMutGuard::commit`] to actually write the new changed value to the
+    /// database. All changes are lost if you simply drop the value.
+    pub async fn try_get_mut(
+        &self, k: K, default: impl FnOnce() -> Result<V>,
+    ) -> Result<Option<KvsMutGuard<'_, K, V, T>>> {
+        match self.lock_set.try_lock(k.clone()) {
+            Some(guard) => Ok(Some(self.get_mut_0(guard, k, default).await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Returns a mutable handle to a value on the KVS store.
+    ///
+    /// If the value does not already exist, it is initialized with [`Default::default`].
+    ///
+    /// If another task is already writing to this database, this function will temporarily block.
+    ///
+    /// You must call [`KvsMutGuard::commit`] to actually write the new changed value to the
+    /// database. All changes are lost if you simply drop the value.
+    pub async fn get_mut_default(&self, k: K) -> Result<KvsMutGuard<'_, K, V, T>>
+        where V: Default,
+    {
+        self.get_mut(k, || Ok(Default::default())).await
+    }
+
+    /// Tries to return a mutable handle to a value on the KVS store. If another task is writing
+    /// to this key, this function will return `None`.
+    ///
+    /// If the value does not already exist, it is initialized with [`Default::default`].
+    ///
+    /// You must call [`KvsMutGuard::commit`] to actually write the new changed value to the
+    /// database. All changes are lost if you simply drop the value.
+    pub async fn try_get_mut_default(&self, k: K) -> Result<Option<KvsMutGuard<'_, K, V, T>>>
+        where V: Default,
+    {
+        self.try_get_mut(k, || Ok(Default::default())).await
     }
 }
 
 pub type KvsStore<K, V> = BaseKvsStore<K, V, PersistentKvsType>;
 pub type TransientKvsStore<K, V> = BaseKvsStore<K, V, TransientKvsType>;
+
+pub struct KvsMutGuard<'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> {
+    parent: &'a BaseKvsStore<K, V, T>,
+    _guard: LockSetGuard<'a, K>,
+    key: K,
+    value: V,
+    data: Arc<BaseKvsStoreInfo>,
+}
+impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> KvsMutGuard<'a, K, V, T> {
+    /// Commit the changed KVS value to the database.
+    pub async fn commit(self) -> Result<()> {
+        self.parent.set_0(&self.data, self.key, self.value).await
+    }
+
+    /// Deletes the KVS value from the database.
+    pub async fn remove(self) -> Result<()> {
+        self.parent.remove_0(&self.data, self.key).await
+    }
+}
+impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType>
+    Deref for KvsMutGuard<'a, K, V, T>
+{
+    type Target = V;
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType>
+    DerefMut for KvsMutGuard<'a, K, V, T>
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
