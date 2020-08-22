@@ -86,7 +86,7 @@ impl <'a> InitKvsEvent<'a> {
                 // all is OK
             } else {
                 // we have a mismatch!
-                todo!("Conversions for mismatched kvs versions.")
+                todo!("Conversions for mismatched kvs key versions.")
             }
         } else {
             // we need to create the table.
@@ -372,6 +372,12 @@ impl KvsStoreQueries {
     }
 }
 
+/// The base type for KVS stores backed by the database.
+///
+/// This is a module, and should be used by attaching it to the your module as a submodule.
+///
+/// You should generally prefer [`KvsStore`] or [`TransientKvsStore`] as convenience wrappers
+/// over this type.
 #[derive(Module)]
 #[module(component)]
 pub struct BaseKvsStore<K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> {
@@ -529,9 +535,17 @@ impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore
     }
 }
 
+/// The base type for KVS stores backed by the database.
+///
+/// This is a module, and should be used by attaching it to the your module as a submodule.
 pub type KvsStore<K, V> = BaseKvsStore<K, V, PersistentKvsType>;
+
+/// The base type for KVS stores backed by the transient database.
+///
+/// This is a module, and should be used by attaching it to the your module as a submodule.
 pub type TransientKvsStore<K, V> = BaseKvsStore<K, V, TransientKvsType>;
 
+/// A guard for mutating values in the KVS as a mutable object.
 pub struct KvsMutGuard<'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> {
     parent: &'a BaseKvsStore<K, V, T>,
     _guard: LockSetGuard<'a, K>,

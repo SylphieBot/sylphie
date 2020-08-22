@@ -8,29 +8,29 @@ use sylphie_utils::scopes::*;
 use sylphie_utils::strings::StringWrapper;
 
 /// A format that can be used to serialize database values.
-pub trait SerializationFormat {
-    fn serialize(val: &impl DbSerializable) -> Result<Vec<u8>>;
-    fn deserialize<T: DbSerializable>(val: &[u8]) -> Result<T>;
+pub trait SerializationFormat<T: DbSerializable> {
+    fn serialize(val: &T) -> Result<Vec<u8>>;
+    fn deserialize(val: &[u8]) -> Result<T>;
 }
 
 /// A [`SerializationFormat`] that serializes in a combat non-self-describing binary form.
 pub enum BincodeFormat { }
-impl SerializationFormat for BincodeFormat {
-    fn serialize(val: &impl DbSerializable) -> Result<Vec<u8>> {
+impl <T: DbSerializable> SerializationFormat<T> for BincodeFormat {
+    fn serialize(val: &T) -> Result<Vec<u8>> {
         Ok(bincode::DefaultOptions::new().with_varint_encoding().serialize(val)?)
     }
-    fn deserialize<T: DbSerializable>(val: &[u8]) -> Result<T> {
+    fn deserialize(val: &[u8]) -> Result<T> {
         Ok(bincode::DefaultOptions::new().with_varint_encoding().deserialize(val)?)
     }
 }
 
 /// A [`SerializationFormat`] that serializes a value as CBOR.
 pub enum CborFormat { }
-impl SerializationFormat for CborFormat {
-    fn serialize(val: &impl DbSerializable) -> Result<Vec<u8>> {
+impl <T: DbSerializable> SerializationFormat<T> for CborFormat {
+    fn serialize(val: &T) -> Result<Vec<u8>> {
         Ok(serde_cbor::to_vec(val)?)
     }
-    fn deserialize<T: DbSerializable>(val: &[u8]) -> Result<T> {
+    fn deserialize(val: &[u8]) -> Result<T> {
         Ok(serde_cbor::from_slice(val)?)
     }
 }
@@ -38,7 +38,7 @@ impl SerializationFormat for CborFormat {
 /// A trait for types that can be serialized into database columns.
 pub trait DbSerializable: Clone + Sized + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The serialization format that will be used for this trait.
-    type Format: SerializationFormat;
+    type Format: SerializationFormat<Self>;
 
     /// An ID used to determine if a type in a serialized data structure has been replaced
     /// entirely.
@@ -68,22 +68,67 @@ pub trait DbSerializable: Clone + Sized + Serialize + DeserializeOwned + Send + 
     }
 }
 
+mod private {
+    use super::*;
+    pub enum DirectFormats {}
+    impl SerializationFormat<Vec<u8>> for DirectFormats {
+        fn serialize(val: &Vec<u8>) -> Result<Vec<u8>> {
+            Ok(val.clone())
+        }
+        fn deserialize(val: &[u8]) -> Result<Vec<u8>> {
+            Ok(val.to_vec())
+        }
+    }
+    impl SerializationFormat<ByteBuf> for DirectFormats {
+        fn serialize(val: &ByteBuf) -> Result<Vec<u8>> {
+            Ok(val.to_vec())
+        }
+        fn deserialize(val: &[u8]) -> Result<ByteBuf> {
+            Ok(ByteBuf::from(val.to_vec()))
+        }
+    }
+    impl SerializationFormat<String> for DirectFormats {
+        fn serialize(val: &String) -> Result<Vec<u8>> {
+            Ok(val.clone().into_bytes())
+        }
+        fn deserialize(val: &[u8]) -> Result<String> {
+            Ok(String::from_utf8(val.to_vec())?)
+        }
+    }
+    impl SerializationFormat<StringWrapper> for DirectFormats {
+        fn serialize(val: &StringWrapper) -> Result<Vec<u8>> {
+            Ok(val.as_str().to_string().into_bytes())
+        }
+        fn deserialize(val: &[u8]) -> Result<StringWrapper> {
+            Ok(StringWrapper::Owned(String::from_utf8(val.to_vec())?.into()))
+        }
+    }
+}
+
 macro_rules! basic_defs {
-    ($($ty:ty => $id:literal),* $(,)?) => {$(
+    (@impl_for $ty:ty, ($id:literal, $format:ty)) => {
         impl DbSerializable for $ty {
-            type Format = BincodeFormat;
+            type Format = $format;
             const ID: &'static str = $id;
             const SCHEMA_VERSION: u32 = 0;
         }
+    };
+    (@impl_for $ty:ty, $id:literal) => {
+        basic_defs!(@impl_for $ty, ($id, BincodeFormat));
+    };
+    ($($ty:ty => $data:tt),* $(,)?) => {$(
+        basic_defs!(@impl_for $ty, $data);
     )*};
 }
 basic_defs! {
     // strings
-    String => "std::string::String",
-    StringWrapper => "std::string::String",
+    String => ("std::string::String", private::DirectFormats),
+    StringWrapper => ("std::string::String", private::DirectFormats),
+
     // byte buffers
-    Vec<u8> => "std::vec::Vec<u8>",
-    ByteBuf => "std::vec::Vec<u8>",
+    Vec<u8> => ("std::vec::Vec<u8>", private::DirectFormats),
+    ByteBuf => ("std::vec::Vec<u8>", private::DirectFormats),
+
     // integers
     u8 => "u8",
     u16 => "uvarint",
@@ -97,6 +142,10 @@ basic_defs! {
     i64 => "ivarint",
     i128 => "ivarint",
     isize => "ivarint",
+
+    // floating point
+    f32 => "f32",
+    f64 => "f64",
 
     // scope definitions
     Scope => "sylphie_utils::scopes::Scope",

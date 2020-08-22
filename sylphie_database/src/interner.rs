@@ -1,13 +1,15 @@
 use arc_swap::*;
 use crate::connection::*;
+use crate::serializable::*;
 use crate::migrations::*;
 use fxhash::{FxHashMap, FxHashSet};
 use static_events::prelude_async::*;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use sylphie_core::prelude::*;
 use sylphie_utils::cache::LruCache;
 use sylphie_utils::locks::LockSet;
+use sylphie_utils::scopes::Scope;
 
 static INTERNER_MIGRATIONS: MigrationData = MigrationData {
     migration_id: "interner b7a62621-ae52-4247-bda6-49d297de20d9",
@@ -19,11 +21,18 @@ static INTERNER_MIGRATIONS: MigrationData = MigrationData {
     ],
 };
 
-struct InternerHive {
+/*
+struct InternerHive<T> {
     hive_id: u32,
-    //cache: LruCache<>,
-    max_value: AtomicUsize,
+    cache: LruCache<T, u64>,
+    rev_cache: LruCache<u64, T>,
+    new_value_lock: LockSet<T>,
+    max_value: AtomicU64,
 }
+impl InternerHive {
+
+}
+*/
 
 #[derive(Default)]
 struct StringInternerData {

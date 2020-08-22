@@ -109,7 +109,7 @@ impl ConfigManager {
                 let id_name = target.get_service::<StringInterner>().lock().lookup_id(id);
                 if &*id_name == T::ID && version == T::SCHEMA_VERSION {
                     Ok(Some(
-                        Arc::new(T::Format::deserialize::<T>(&data)?)
+                        Arc::new(T::Format::deserialize(&data)?)
                             as Arc<dyn Any + Send + Sync>,
                     ))
                 } else if T::can_migrate_from(&id_name, version) {
