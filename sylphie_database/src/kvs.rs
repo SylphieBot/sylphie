@@ -3,7 +3,6 @@ use crate::connection::*;
 use crate::migrations::*;
 use crate::interner::*;
 use crate::serializable::*;
-use serde_bytes::ByteBuf;
 use static_events::prelude_async::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -327,8 +326,8 @@ impl KvsStoreQueries {
         conn.execute(
             self.store_query.clone(),
             (
-                ByteBuf::from(K::Format::serialize(key)?),
-                ByteBuf::from(V::Format::serialize(value)?),
+                K::Format::serialize(key)?,
+                V::Format::serialize(value)?,
                 value_schema_id, V::SCHEMA_VERSION,
             ),
         ).await?;
@@ -339,7 +338,7 @@ impl KvsStoreQueries {
     ) -> Result<()> {
         conn.execute(
             self.delete_query.clone(),
-            ByteBuf::from(K::Format::serialize(key)?),
+            K::Format::serialize(key)?,
         ).await?;
         Ok(())
     }
@@ -347,16 +346,16 @@ impl KvsStoreQueries {
         &'a self, conn: &'a mut DbConnection, key: &K, store_info: &'a BaseKvsStoreInfo,
         is_migration_mandatory: bool,
     ) -> Result<Option<V>> {
-        let result: Option<(ByteBuf, u32, u32)> = conn.query_row(
+        let result: Option<(SerializeValue, u32, u32)> = conn.query_row(
             self.load_query.clone(),
-            ByteBuf::from(K::Format::serialize(key)?),
+            K::Format::serialize(key)?,
         ).await?;
-        if let Some((bytes, schema_id, schema_ver)) = result {
+        if let Some((value, schema_id, schema_ver)) = result {
             let schema_name = store_info.interner.lookup_id(schema_id);
             if V::ID == &*schema_name && V::SCHEMA_VERSION == schema_ver {
-                Ok(Some(V::Format::deserialize(&bytes)?))
+                Ok(Some(V::Format::deserialize(value)?))
             } else if V::can_migrate_from(&schema_name, schema_ver) {
-                Ok(Some(V::do_migration(&schema_name, schema_ver, &bytes)?))
+                Ok(Some(V::do_migration(&schema_name, schema_ver, value)?))
             } else if !is_migration_mandatory {
                 Ok(None)
             } else {

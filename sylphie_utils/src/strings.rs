@@ -41,6 +41,27 @@ impl StringWrapper {
             StringWrapper::Interned(s) => &s,
         }
     }
+
+    /// Returns the string contained in this type as an `Arc<str>`.
+    pub fn as_arc(&self) -> Arc<str> {
+        match self {
+            StringWrapper::Static(s) => (*s).into(),
+            StringWrapper::Owned(s) => s.clone().into(),
+            StringWrapper::Shared(s) => s.clone(),
+            StringWrapper::Interned(s) => s.clone(),
+        }
+    }
+
+    /// Reinterns this string if it was already interned.
+    ///
+    /// This is useful sometimes if the interned version of the string has fallen out of the
+    /// cache.
+    pub fn reintern(&self) -> Self {
+        match self {
+            StringWrapper::Interned(s) => StringWrapper::Interned(s.intern()),
+            s => s.intern(),
+        }
+    }
 }
 
 impl From<&'static str> for StringWrapper {
@@ -58,6 +79,12 @@ impl From<Arc<str>> for StringWrapper {
         StringWrapper::Shared(s)
     }
 }
+impl From<StringWrapper> for Arc<str> {
+    fn from(s: StringWrapper) -> Self {
+        s.as_arc()
+    }
+}
+
 impl Deref for StringWrapper {
     type Target = str;
     fn deref(&self) -> &Self::Target {

@@ -4,6 +4,7 @@ use crate::serializable::*;
 use crate::migrations::*;
 use fxhash::{FxHashMap, FxHashSet};
 use static_events::prelude_async::*;
+use std::hash::Hash;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use sylphie_core::prelude::*;
@@ -21,18 +22,16 @@ static INTERNER_MIGRATIONS: MigrationData = MigrationData {
     ],
 };
 
-/*
-struct InternerHive<T> {
+struct InternerHive<T: DbSerializable + Eq + Hash> {
     hive_id: u32,
     cache: LruCache<T, u64>,
     rev_cache: LruCache<u64, T>,
     new_value_lock: LockSet<T>,
     max_value: AtomicU64,
 }
-impl InternerHive {
+impl <T: DbSerializable + Eq + Hash> InternerHive<T> {
 
 }
-*/
 
 #[derive(Default)]
 struct StringInternerData {

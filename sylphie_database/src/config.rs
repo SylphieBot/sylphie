@@ -2,7 +2,6 @@ use crate::connection::*;
 use crate::migrations::*;
 use crate::interner::*;
 use crate::serializable::*;
-use serde_bytes::ByteBuf;
 use static_events::prelude_async::*;
 use std::any::{Any, TypeId};
 use std::fmt;
@@ -100,21 +99,21 @@ impl ConfigManager {
         let scope = scope.intern();
         let val = self.cache.cached_async((scope.clone(), key.id), async {
             let mut conn = target.connect_db().await?;
-            let result: Option<(Option<ByteBuf>, Option<u32>, Option<u32>)> = conn.query_row(
+            let res: Option<(Option<SerializeValue>, Option<u32>, Option<u32>)> = conn.query_row(
                 "SELECT val, val_schema_id, val_schema_version FROM sylphie_db_configuration \
                  WHERE scope = ? AND key_id = ?;",
-                (ByteBuf::from(BincodeFormat::serialize(&scope)?), key.storage_name),
+                (BincodeFormat::serialize(&scope)?, key.storage_name),
             ).await?;
-            if let Some((Some(data), Some(id), Some(version))) = result {
+            if let Some((Some(data), Some(id), Some(version))) = res {
                 let id_name = target.get_service::<StringInterner>().lock().lookup_id(id);
                 if &*id_name == T::ID && version == T::SCHEMA_VERSION {
                     Ok(Some(
-                        Arc::new(T::Format::deserialize(&data)?)
+                        Arc::new(T::Format::deserialize(data)?)
                             as Arc<dyn Any + Send + Sync>,
                     ))
                 } else if T::can_migrate_from(&id_name, version) {
                     Ok(Some(
-                        Arc::new(T::do_migration(&id_name, version, &data)?)
+                        Arc::new(T::do_migration(&id_name, version, data)?)
                             as Arc<dyn Any + Send + Sync>,
                     ))
                 } else {
@@ -142,9 +141,9 @@ impl ConfigManager {
              (scope, key_id, val, val_schema_id, val_schema_version),\
              VALUES (?, ?, ?, ?, ?)",
             (
-                ByteBuf::from(BincodeFormat::serialize(&scope)?),
+                BincodeFormat::serialize(&scope)?,
                 key.storage_name,
-                ByteBuf::from(T::Format::serialize(&value)?),
+                T::Format::serialize(&value)?,
                 target.get_service::<StringInterner>().lock().lookup_name(T::ID),
                 T::SCHEMA_VERSION,
             ),
@@ -161,7 +160,7 @@ impl ConfigManager {
         conn.execute(
             "DELETE FROM sylphie_db_configuration \
              WHERE scope = ? AND key_id = ?;",
-            (ByteBuf::from(BincodeFormat::serialize(&scope)?), key.storage_name),
+            (BincodeFormat::serialize(&scope)?, key.storage_name),
         ).await?;
         self.cache.invalidate(&(scope.clone(), key.id));
         Ok(())
