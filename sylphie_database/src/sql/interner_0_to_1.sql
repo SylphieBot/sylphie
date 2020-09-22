@@ -1,8 +1,7 @@
 CREATE TABLE sylphie_db_interner (
-    --hive INTEGER NOT NULL,
+    hive INTEGER NOT NULL,
     name BLOB NOT NULL,
     int_id BIGINT NOT NULL,
-    PRIMARY KEY (name)
-    --PRIMARY KEY (hive, name),
-    --UNIQUE (hive, int_id)
+    PRIMARY KEY (hive, name),
+    UNIQUE (hive, int_id)
 ) WITHOUT ROWID;

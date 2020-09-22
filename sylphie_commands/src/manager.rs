@@ -4,7 +4,7 @@ use crate::ctx::CommandCtx;
 use static_events::prelude_async::*;
 use std::sync::Arc;
 use sylphie_core::errors::*;
-use sylphie_utils::disambiguate::{CanDisambiguate, DisambiguatedSet, Disambiguated};
+use sylphie_utils::disambiguate::{CanDisambiguate, DisambiguatedSet, Disambiguated, LookupResult};
 
 /// The event used to register commands.
 #[derive(Debug, Default)]
@@ -34,14 +34,7 @@ impl CanDisambiguate for Command {
 }
 
 /// The result of a command lookup.
-pub enum CommandLookupResult {
-    /// No matching commands were found.
-    NoneFound,
-    /// A single unambiguous command was found.
-    Found(Command),
-    /// An ambiguous set of commands was found.
-    Ambigious(Vec<Command>),
-}
+pub type CommandLookupResult = LookupResult<Command>;
 
 /// The service used to lookup commands.
 #[derive(Clone, Debug)]
@@ -81,19 +74,12 @@ impl CommandManager {
         let data = data.as_ref().map_or(&self.0.null, |x| &*x);
 
         let mut valid_commands = Vec::new();
-        for command in data.resolve(command)? {
+        for command in data.resolve_iter(command)? {
             if command.value.can_access(ctx).await? {
                 valid_commands.push(command.value.clone());
             }
         }
-
-        Ok(if valid_commands.len() == 0 {
-            CommandLookupResult::NoneFound
-        } else if valid_commands.len() == 1 {
-            CommandLookupResult::Found(valid_commands.pop().unwrap())
-        } else {
-            CommandLookupResult::Ambigious(valid_commands)
-        })
+        Ok(CommandLookupResult::new(valid_commands))
     }
 
     /// Executes a command immediately.

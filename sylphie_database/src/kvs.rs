@@ -44,7 +44,7 @@ struct KvsTarget {
 }
 struct KvsMetadata {
     table_name: String,
-    key_id: u32,
+    key_id: u64,
     key_version: u32,
     is_used: bool,
 }
@@ -62,7 +62,7 @@ impl <'a> InitKvsEvent<'a> {
         &mut self, target: &Handler<impl Events>,
         key_id: &'static str, key_version: u32, module: &ModuleInfo, is_transient: bool,
     ) -> Result<()> {
-        let interner = target.get_service::<StringInterner>().lock();
+        let interner = target.get_service::<Interner>().lock();
 
         let mod_name = module.name();
         if self.found_modules.contains(mod_name) {
@@ -77,7 +77,7 @@ impl <'a> InitKvsEvent<'a> {
         }) {
             existing_metadata.is_used = true;
 
-            let exist_name = interner.lookup_id(existing_metadata.key_id);
+            let exist_name = interner.get_ser_id_rev(existing_metadata.key_id);
             let key_id_matches = key_id == &*exist_name;
             let key_version_matches = key_version == existing_metadata.key_version;
 
@@ -139,7 +139,7 @@ impl <'a> InitKvsEvent<'a> {
     }
 
     fn create_kvs_table(
-        &mut self, interner: &StringInternerLock, module_path: String, table_name: String,
+        &mut self, interner: &InternerLock, module_path: String, table_name: String,
         key_id: &'static str, key_version: u32, is_transient: bool,
     ) -> Result<()> {
         debug!("Creating table for KVS store '{}'...", table_name);
@@ -164,7 +164,7 @@ impl <'a> InitKvsEvent<'a> {
             ),
             (
                 module_path.clone(), table_name.clone(), 0,
-                interner.lookup_name(key_id), key_version,
+                interner.get_ser_id(key_id), key_version,
             ),
         )?;
         transaction.commit()?;
@@ -174,7 +174,7 @@ impl <'a> InitKvsEvent<'a> {
             KvsTarget { module_path, is_transient },
             KvsMetadata {
                 table_name,
-                key_id: interner.lookup_name(key_id),
+                key_id: interner.get_ser_id(key_id),
                 key_version,
                 is_used: true,
             },
@@ -183,7 +183,7 @@ impl <'a> InitKvsEvent<'a> {
     }
 
     fn load_kvs_metadata(&mut self, is_transient: bool) -> Result<()> {
-        let values: Vec<(String, String, u32, u32, u32)> = self.conn.query_vec_nullary(
+        let values: Vec<(String, String, u32, u64, u32)> = self.conn.query_vec_nullary(
             format!(
                 "SELECT module_path, table_name, kvs_schema_version, key_id, key_version \
                  FROM {}sylphie_db_kvs_info",
@@ -271,21 +271,21 @@ pub(crate) fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
 
 struct BaseKvsStoreInfo {
     db: Database,
-    interner: StringInternerLock,
-    value_id: u32,
+    interner: InternerLock,
+    value_id: u64,
     queries: KvsStoreQueries,
 }
 impl BaseKvsStoreInfo {
     fn new(
         target: &Handler<impl Events>,
-        module: &str, is_transient: bool, late: &InitKvsLate, value_id: &str,
+        module: &str, is_transient: bool, late: &InitKvsLate, value_id: &'static str,
     ) -> Self {
         let metadata = late.module_metadata.get(&KvsTarget {
             module_path: module.to_string(),
             is_transient,
         }).unwrap();
-        let interner = target.get_service::<StringInterner>().lock();
-        let value_id = interner.lookup_name(value_id);
+        let interner = target.get_service::<Interner>().lock();
+        let value_id = interner.get_ser_id(value_id);
         BaseKvsStoreInfo {
             db: target.get_service::<Database>().clone(),
             interner,
@@ -321,7 +321,7 @@ impl KvsStoreQueries {
     }
 
     async fn store_value<K: DbSerializable, V: DbSerializable>(
-        &self, conn: &mut DbConnection, key: &K, value: &V, value_schema_id: u32,
+        &self, conn: &mut DbConnection, key: &K, value: &V, value_schema_id: u64,
     ) -> Result<()> {
         conn.execute(
             self.store_query.clone(),
@@ -346,12 +346,12 @@ impl KvsStoreQueries {
         &'a self, conn: &'a mut DbConnection, key: &K, store_info: &'a BaseKvsStoreInfo,
         is_migration_mandatory: bool,
     ) -> Result<Option<V>> {
-        let result: Option<(SerializeValue, u32, u32)> = conn.query_row(
+        let result: Option<(SerializeValue, u64, u32)> = conn.query_row(
             self.load_query.clone(),
             K::Format::serialize(key)?,
         ).await?;
         if let Some((value, schema_id, schema_ver)) = result {
-            let schema_name = store_info.interner.lookup_id(schema_id);
+            let schema_name = store_info.interner.get_ser_id_rev(schema_id);
             if V::ID == &*schema_name && V::SCHEMA_VERSION == schema_ver {
                 Ok(Some(V::Format::deserialize(value)?))
             } else if V::can_migrate_from(&schema_name, schema_ver) {
@@ -390,9 +390,9 @@ pub struct BaseKvsStore<K: DbSerializable + Hash + Eq, V: DbSerializable, T: Kvs
 #[module_impl]
 impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore<K, V, T> {
     #[event_handler]
-    fn init_interner<'a>(&self, ev: &mut InitInternedStrings<'a>) -> Result<()> {
-        ev.intern(K::ID)?;
-        ev.intern(V::ID)?;
+    fn init_interner<'a>(&self, ev: &mut InitInterner<'a>) -> Result<()> {
+        ev.intern_id(K::ID)?;
+        ev.intern_id(V::ID)?;
         Ok(())
     }
 

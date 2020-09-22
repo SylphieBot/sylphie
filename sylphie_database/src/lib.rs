@@ -10,6 +10,10 @@ pub mod connection;
 pub mod kvs;
 pub mod serializable;
 
+pub mod utils {
+    pub use crate::interner::{ScopeId, StringId};
+}
+
 use std::fs;
 use sylphie_core::core::{EarlyInitEvent, BotInfo};
 use sylphie_core::derives::*;
@@ -27,7 +31,7 @@ failable_event!(InitDbEvent, (), Error);
 #[derive(Events)]
 pub struct DatabaseModule {
     #[service] #[subhandler] config: config::ConfigManager,
-    #[service] interner: interner::StringInterner,
+    #[service] interner: interner::Interner,
     #[service] database: connection::Database,
     #[service] migrations: migrations::MigrationManager,
 }

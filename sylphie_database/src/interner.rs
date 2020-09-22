@@ -2,7 +2,8 @@ use arc_swap::*;
 use crate::connection::*;
 use crate::serializable::*;
 use crate::migrations::*;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
+use serde::*;
 use static_events::prelude_async::*;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use sylphie_core::prelude::*;
 use sylphie_utils::cache::LruCache;
 use sylphie_utils::locks::LockSet;
 use sylphie_utils::scopes::Scope;
+use sylphie_utils::strings::{StringWrapper, InternString};
 
 static INTERNER_MIGRATIONS: MigrationData = MigrationData {
     migration_id: "interner b7a62621-ae52-4247-bda6-49d297de20d9",
@@ -22,6 +24,14 @@ static INTERNER_MIGRATIONS: MigrationData = MigrationData {
     ],
 };
 
+#[derive(Copy, Clone)]
+#[repr(u32)]
+enum HiveId {
+    SerialIds = 0,
+    Scopes = 1,
+    Other = 2,
+}
+
 struct InternerHive<T: DbSerializable + Eq + Hash> {
     hive_id: u32,
     cache: LruCache<T, u64>,
@@ -30,110 +40,226 @@ struct InternerHive<T: DbSerializable + Eq + Hash> {
     max_value: AtomicU64,
 }
 impl <T: DbSerializable + Eq + Hash> InternerHive<T> {
-
-}
-
-#[derive(Default)]
-struct StringInternerData {
-    intern_data: FxHashSet<Arc<str>>,
-    cache: FxHashMap<Arc<str>, u32>,
-    rev_cache: FxHashMap<u32, Arc<str>>,
-    next_key: u32,
-}
-impl StringInternerData {
-    fn intern(&mut self, name: &str) -> Arc<str> {
-        let arc: Arc<str> = name.to_string().into();
-        if let Some(x) = self.intern_data.get(&arc) {
-            x.clone()
-        } else {
-            self.intern_data.insert(arc.clone());
-            arc
-        }
-    }
-    fn intern_to_db(
-        &mut self, conn: &mut DbSyncConnection, name: &'static str,
-    ) -> Result<()> {
-        let name = self.intern(name);
-        if !self.cache.contains_key(&name) {
-            self.next_key += 1;
-            conn.execute(
-                "INSERT INTO sylphie_db_interner (name, int_id) \
-                 VALUES (?, ?);",
-                (name.clone(), self.next_key),
-            )?;
-            self.cache.insert(name.clone(), self.next_key);
-            self.rev_cache.insert(self.next_key, name);
-        }
-        Ok(())
+    fn from_db(hive_id: HiveId, conn: &mut DbSyncConnection) -> Result<InternerHive<T>> {
+        let max_value: u64 = conn.query_row(
+            "SELECT MAX(int_id) FROM sylphie_db_interner WHERE hive = ?;",
+            hive_id as u32,
+        )?.flatten().unwrap_or(0);
+        Ok(InternerHive {
+            hive_id: hive_id as u32,
+            cache: LruCache::new(512),
+            rev_cache: LruCache::new(512),
+            new_value_lock: LockSet::new(),
+            max_value: AtomicU64::new(max_value + 1),
+        })
     }
 
-    fn register_interned(&mut self, name: &str, id: u32) {
-        let name = self.intern(name);
-        self.cache.insert(name.clone(), id);
-        self.rev_cache.insert(id, name);
-        if id > self.next_key {
-            self.next_key = id;
-        }
-    }
-    fn load_schema_key_values(&mut self, conn: &mut DbSyncConnection) -> Result<()> {
-        let schema_id_values: Vec<(String, u32)> = conn.query_vec_nullary(
-            "SELECT name, int_id FROM sylphie_db_interner",
+    fn intern_query_sync(&self, conn: &mut DbSyncConnection, value: T) -> Result<u64> {
+        let result: Option<u64> = conn.query_row(
+            "SELECT int_id FROM sylphie_db_interner WHERE hive = ? AND name = ?;",
+            (self.hive_id, T::Format::serialize(&value)?),
         )?;
-        for (name, id) in schema_id_values {
-            self.register_interned(&name, id);
+        match result {
+            Some(res) => Ok(res),
+            None => {
+                let new_id = self.max_value.fetch_add(1, Ordering::Relaxed);
+                conn.execute(
+                    "INSERT INTO sylphie_db_interner (hive, name, int_id) VALUES (?, ?, ?);",
+                    (self.hive_id, T::Format::serialize(&value)?, new_id),
+                )?;
+                Ok(new_id)
+            }
         }
+    }
+    fn query_all(
+        &self, conn: &mut DbSyncConnection, mut consume: impl FnMut(T, u64) -> Result<()>,
+    ) -> Result<()> {
+        let result: Vec<(SerializeValue, u64)> = conn.query_vec(
+            "SELECT name, int_id FROM sylphie_db_interner WHERE hive = ?;",
+            self.hive_id,
+        )?;
+        for (value, id) in result {
+            consume(T::Format::deserialize(value)?, id)?;
+        }
+        Ok(())
+    }
+
+    async fn intern_query(&self, conn: &mut DbConnection, value: T) -> Result<u64> {
+        self.cache.cached_async(value.clone(), async {
+            let result: Option<u64> = conn.query_row(
+                "SELECT int_id FROM sylphie_db_interner WHERE hive = ? AND name = ?;",
+                (self.hive_id, T::Format::serialize(&value)?),
+            ).await?;
+            Ok(result.unwrap_or(0))
+        }).await
+    }
+    async fn intern(&self, conn: &mut DbConnection, value: T) -> Result<u64> {
+        let id = self.intern_query(conn, value.clone()).await?;
+        if id == 0 {
+            let _guard = self.new_value_lock.lock(value.clone()).await;
+            let current_val = self.intern_query(conn, value.clone()).await?;
+            if current_val != 0 {
+                Ok(current_val)
+            } else {
+                let new_id = self.max_value.fetch_add(1, Ordering::Relaxed);
+                conn.execute(
+                    "INSERT INTO sylphie_db_interner (hive, name, int_id) VALUES (?, ?, ?);",
+                    (self.hive_id, T::Format::serialize(&value)?, new_id),
+                ).await?;
+                self.cache.insert(value, new_id);
+                Ok(new_id)
+            }
+        } else {
+            Ok(id)
+        }
+    }
+    async fn rev_intern(
+        &self, conn: &mut DbConnection, value: u64, intern: impl FnOnce(T) -> T,
+    ) -> Result<T> {
+        self.rev_cache.cached_async(value.clone(), async {
+            let result: SerializeValue = conn.query_row(
+                "SELECT name FROM sylphie_db_interner WHERE hive = ? AND int_id = ?;",
+                (self.hive_id, value),
+            ).await?.internal_err(|| "Invalid interned value.")?;
+            Ok(intern(T::Format::deserialize(result)?))
+        }).await
+    }
+}
+
+pub struct InitInterner<'a> {
+    hive: &'a InternerHive<StringWrapper>,
+    map_forward: &'a mut FxHashMap<usize, u64>,
+    map_backward: &'a mut FxHashMap<u64, StringWrapper>,
+    conn: &'a mut DbSyncConnection,
+}
+failable_event!(['a] InitInterner<'a>, (), Error);
+impl <'a> InitInterner<'a> {
+    pub fn intern_id(&mut self, name: &'static str) -> Result<()> {
+        let raw_id = self.hive.intern_query_sync(&mut *self.conn, StringWrapper::Static(name))?;
+        self.map_forward.insert(name.as_ptr() as usize, raw_id);
+        self.map_backward.insert(raw_id, StringWrapper::Static(name));
         Ok(())
     }
 }
 
-pub struct InitInternedStrings<'a> {
-    data: &'a mut StringInternerData,
-    conn: DbSyncConnection,
-}
-failable_event!(['a] InitInternedStrings<'a>, (), Error);
-impl <'a> InitInternedStrings<'a> {
-    pub fn intern(&mut self, name: &'static str) -> Result<()> {
-        self.data.intern_to_db(&mut self.conn, name)
-    }
+struct InternerData {
+    hive_scopes: InternerHive<Scope>,
+    hive_other: InternerHive<Arc<str>>,
+    map_forward: FxHashMap<usize, u64>,
+    map_backward: FxHashMap<u64, StringWrapper>,
 }
 
-pub struct StringInternerLock {
-    data: Arc<StringInternerData>,
+pub struct InternerLock {
+    data: Arc<InternerData>,
 }
-impl StringInternerLock {
-    pub fn lookup_id(&self, id: u32) -> Arc<str> {
-        self.data.rev_cache.get(&id).expect("ID does not exist.").clone()
+impl InternerLock {
+    pub fn get_ser_id(&self, name: &'static str) -> u64 {
+        *self.data.map_forward.get(&(name.as_ptr() as usize)).expect("Name does not exist.")
     }
-    pub fn lookup_name(&self, name: &str) -> u32 {
-        *self.data.cache.get(name).expect("Name does not exist.")
+    pub fn get_ser_id_rev(&self, id: u64) -> Arc<str> {
+        self.data.map_backward.get(&id).expect("ID does not exist.").as_arc()
+    }
+
+    pub async fn get_scope_id(&self, conn: &mut DbConnection, name: Scope) -> Result<ScopeId> {
+        Ok(ScopeId(self.data.hive_scopes.intern(conn, name.intern()).await?))
+    }
+    pub async fn get_scope_id_rev(&self, conn: &mut DbConnection, id: ScopeId) -> Result<Scope> {
+        self.data.hive_scopes.rev_intern(conn, id.0, |x| x.intern()).await
+    }
+
+    pub async fn get_str_id(&self, conn: &mut DbConnection, str: &str) -> Result<StringId> {
+        Ok(StringId(self.data.hive_other.intern(conn, str.intern()).await?))
+    }
+    pub async fn get_str_id_rev(&self, conn: &mut DbConnection, id: StringId) -> Result<Arc<str>> {
+        self.data.hive_other.rev_intern(conn, id.0, |x| x.intern()).await
     }
 }
 
 #[derive(Default)]
-pub struct StringInterner {
-    data: ArcSwapOption<StringInternerData>,
+pub struct Interner {
+    data: ArcSwapOption<InternerData>,
 }
-impl StringInterner {
-    pub fn lock(&self) -> StringInternerLock {
-        StringInternerLock {
+impl Interner {
+    pub fn lock(&self) -> InternerLock {
+        InternerLock {
             data: self.data.load().as_ref().expect("SchemaCache is not initialized").clone(),
         }
     }
 }
 
-pub fn init_interner(target: &Handler<impl Events>) -> Result<()> {
+#[derive(Serialize, Deserialize)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Default, Debug)]
+#[serde(transparent)]
+pub struct StringId(u64);
+impl StringId {
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+    pub async fn intern(target: &Handler<impl Events>, str: &str) -> Result<StringId> {
+        target.get_service::<Interner>().lock().get_str_id(
+            &mut target.connect_db().await?, str,
+        ).await
+    }
+    pub async fn extract(&self, target: &Handler<impl Events>) -> Result<Arc<str>> {
+        target.get_service::<Interner>().lock().get_str_id_rev(
+            &mut target.connect_db().await?, *self,
+        ).await
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Default, Debug)]
+#[serde(transparent)]
+pub struct ScopeId(u64);
+impl ScopeId {
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+    pub async fn intern(target: &Handler<impl Events>, scope: Scope) -> Result<ScopeId> {
+        target.get_service::<Interner>().lock().get_scope_id(
+            &mut target.connect_db().await?, scope,
+        ).await
+    }
+    pub async fn extract(&self, target: &Handler<impl Events>) -> Result<Scope> {
+        target.get_service::<Interner>().lock().get_scope_id_rev(
+            &mut target.connect_db().await?, *self,
+        ).await
+    }
+}
+
+pub(crate) fn init_interner(target: &Handler<impl Events>) -> Result<()> {
     INTERNER_MIGRATIONS.execute_sync(target)?;
 
     let mut conn = target.connect_db_sync()?;
-    let mut data = StringInternerData::default();
-    data.load_schema_key_values(&mut conn)?;
 
-    let ev = InitInternedStrings {
-        data: &mut data,
-        conn,
+    let hive = InternerHive::from_db(HiveId::SerialIds, &mut conn)?;
+    let mut map_forward = Default::default();
+    let mut map_backward = Default::default();
+
+    let ev = InitInterner {
+        hive: &hive,
+        map_forward: &mut map_forward,
+        map_backward: &mut map_backward,
+        conn: &mut conn,
     };
     target.dispatch_sync(ev)?;
-    target.get_service::<StringInterner>().data.store(Some(Arc::new(data)));
+    hive.query_all(&mut conn, |name, id| {
+        if !map_backward.contains_key(&id) {
+            map_backward.insert(id, name.intern());
+        }
+        Ok(())
+    })?;
+
+    let hive_scopes = InternerHive::from_db(HiveId::Scopes, &mut conn)?;
+    let hive_other = InternerHive::from_db(HiveId::Other, &mut conn)?;
+    target.get_service::<Interner>().data.store(Some(Arc::new(InternerData {
+        hive_scopes,
+        hive_other,
+        map_forward,
+        map_backward,
+    })));
 
     Ok(())
 }

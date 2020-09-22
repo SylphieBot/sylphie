@@ -116,7 +116,7 @@ impl <T: CanDisambiguate> DisambiguatedSet<T> {
         self.list.clone()
     }
 
-    pub fn resolve<'a>(
+    pub fn resolve_iter<'a>(
         &'a self, raw_name: &str,
     ) -> Result<impl Iterator<Item = &Arc<Disambiguated<T>>> + 'a> {
         let lc_name = raw_name.to_ascii_lowercase();
@@ -133,5 +133,26 @@ impl <T: CanDisambiguate> DisambiguatedSet<T> {
             .map(|x| &**x)
             .unwrap_or(&[]);
         Ok(list.iter())
+    }
+}
+
+/// The result of a lookup.
+pub enum LookupResult<T> {
+    /// No matching entries were found.
+    NoneFound,
+    /// A single unambiguous entry was found.
+    Found(T),
+    /// An ambiguous set of entries were found.
+    Ambigious(Vec<T>),
+}
+impl <T> LookupResult<T> {
+    pub fn new(mut list: Vec<T>) -> Self {
+        if list.len() == 0 {
+            LookupResult::NoneFound
+        } else if list.len() == 1 {
+            LookupResult::Found(list.pop().unwrap())
+        } else {
+            LookupResult::Ambigious(list)
+        }
     }
 }

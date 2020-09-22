@@ -1,7 +1,6 @@
 use bincode::Options;
 use serde::*;
 use serde::de::{DeserializeOwned, Visitor, Error as DeError};
-use serde_bytes::ByteBuf;
 use std::any::Any;
 use std::sync::Arc;
 use sylphie_core::prelude::*;
@@ -195,14 +194,6 @@ mod private {
             Ok(val.into_bytes()?.to_vec())
         }
     }
-    impl SerializationFormat<ByteBuf> for DirectFormats {
-        fn serialize(val: &ByteBuf) -> Result<SerializeValue> {
-            Ok(val.to_vec().into())
-        }
-        fn deserialize(val: SerializeValue) -> Result<ByteBuf> {
-            Ok(ByteBuf::from(val.into_bytes()?.to_vec()))
-        }
-    }
     impl SerializationFormat<String> for DirectFormats {
         fn serialize(val: &String) -> Result<SerializeValue> {
             Ok(val.clone().into())
@@ -217,6 +208,14 @@ mod private {
         }
         fn deserialize(val: SerializeValue) -> Result<StringWrapper> {
             Ok(StringWrapper::Shared(val.into_str()?))
+        }
+    }
+    impl SerializationFormat<Arc<str>> for DirectFormats {
+        fn serialize(val: &Arc<str>) -> Result<SerializeValue> {
+            Ok(val.clone().into())
+        }
+        fn deserialize(val: SerializeValue) -> Result<Arc<str>> {
+            Ok(val.into_str()?)
         }
     }
 
@@ -274,10 +273,10 @@ basic_defs! {
     // strings
     String => ("direct_str", private::DirectFormats),
     StringWrapper => ("direct_str", private::DirectFormats),
+    Arc<str> => ("direct_str", private::DirectFormats),
 
     // byte buffers
     Vec<u8> => ("direct_bytes", private::DirectFormats),
-    ByteBuf => ("direct_bytes", private::DirectFormats),
 
     // integers
     u8 => ("direct_int", private::DirectFormats),
