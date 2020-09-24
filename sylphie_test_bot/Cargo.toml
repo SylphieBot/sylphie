@@ -1,0 +1,12 @@
+[package]
+name = "sylphie_test_bot"
+version = "0.1.0"
+authors = ["Lymia Aluysia <lymia@lymiahugs.com>"]
+edition = "2018"
+
+[features]
+
+[dependencies]
+backtrace = "0.3.48"
+static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
+sylphie = { version = "0.1.0", path = "../sylphie/sylphie" }

@@ -1,0 +1,10 @@
+[package]
+name = "sylphie_mod_management"
+version = "0.1.0"
+authors = ["Lymia Aluysia <lymia@lymiahugs.com>"]
+edition = "2018"
+
+[features]
+
+[dependencies]
+sylphie = { version = "0.1.0", path = "../sylphie/sylphie" }

@@ -198,10 +198,11 @@ fn process_items(
 pub(crate) fn derive_impl(paths: &CratePaths, input: TokenStream) -> Result<TokenStream> {
     let mut input: ItemImpl = parse(input)?;
 
+    let core = &paths.core;
     let mut events = EventsImplAttr::new(
-        &mut input, Some(quote! { ::sylphie_core::__macro_export::static_events }), true,
+        &mut input, Some(quote! { #core::__macro_export::static_events }), true,
     )?;
-    events.set_discriminator(quote! { ::sylphie_core::__macro_priv::ModuleImplPhase });
+    events.set_discriminator(quote! { #core::__macro_priv::ModuleImplPhase });
     process_items(paths, &mut events, &mut input)?;
     let events_impl = events.generate();
 

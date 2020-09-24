@@ -1,11 +1,17 @@
 [workspace]
 members = [
-    "sylphie",
-    "sylphie_commands",
-    "sylphie_core",
-    "sylphie_database",
-    "sylphie_derive",
-    "sylphie_utils",
+    "sylphie/sylphie",
+    "sylphie/sylphie_commands",
+    "sylphie/sylphie_core",
+    "sylphie/sylphie_database",
+    "sylphie/sylphie_derive",
+    "sylphie/sylphie_utils",
+
+    # Modules
+    "sylphie_mod_management",
+
+    # Misc
+    "sylphie_test_bot",
 ]
 
 [profile.release]
