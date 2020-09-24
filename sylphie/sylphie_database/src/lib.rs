@@ -10,6 +10,9 @@ pub mod connection;
 pub mod kvs;
 pub mod serializable;
 
+/// Contains misc types that involve the database.
+///
+/// These are merged into `sylphie::utils` in the wrapper library.
 pub mod utils {
     pub use crate::interner::{ScopeId, StringId};
 }
