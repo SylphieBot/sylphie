@@ -1,5 +1,5 @@
 [package]
-name = "sylphie_mod_management"
+name = "sylphie_mod_core"
 version = "0.1.0"
 authors = ["Lymia Aluysia <lymia@lymiahugs.com>"]
 edition = "2018"

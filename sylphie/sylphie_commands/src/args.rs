@@ -31,9 +31,14 @@ impl <'a, E: Events> ArgsParserCtx<'a, E> {
         self.current_idx
     }
 
+    /// Returns whether there are further arguments to the command.
+    pub fn has_next_arg(&self) -> bool {
+        self.current_idx < self.ctx.args_count()
+    }
+
     /// Returns the current argument and increments the current argument.
     pub fn next_arg_raw(&mut self) -> Result<CommandArg<'a>> {
-        if self.current_idx >= self.ctx.args_count() {
+        if !self.has_next_arg() {
             cmd_error!("Not enough arguments for command!");
             // TODO: give a better error output
         }
@@ -87,5 +92,16 @@ impl <'a, E: Events> ParseArg<'a, E> for String {
 impl <'a, E: Events> ParseArg<'a, E> for &'a str {
     fn produce(producer: &mut ArgsParserCtx<'a, E>) -> Result<Self> {
         Ok(producer.next_arg_raw()?.text)
+    }
+}
+
+// Handle optional parameters
+impl <'a, E: Events, A: ParseArg<'a, E>> ParseArg<'a, E> for Option<A> {
+    fn produce(producer: &mut ArgsParserCtx<'a, E>) -> Result<Self> {
+        if producer.has_next_arg() {
+            Ok(Some(A::produce(producer)?))
+        } else {
+            Ok(None)
+        }
     }
 }

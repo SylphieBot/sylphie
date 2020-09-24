@@ -53,7 +53,7 @@ macro_rules! sylphie_root_module {
                 #[submodule] $(#[$meta])*
                 $name: $ty,
             )*
-            #[submodule] core: $crate::__macro_export::CoreModule<$mod_name>,
+            #[submodule] base: $crate::__macro_export::CoreModule<$mod_name>,
         }
     };
 }

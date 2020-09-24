@@ -83,6 +83,7 @@ impl MyModule {
 sylphie_root_module! {
     module Test {
         test_bot: MyModule,
+        management: sylphie_mod_core::ModCore,
     }
 }
 

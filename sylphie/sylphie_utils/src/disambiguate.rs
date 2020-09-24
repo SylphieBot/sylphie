@@ -1,5 +1,6 @@
 use crate::strings::InternString;
 use fxhash::{FxHashMap, FxHashSet};
+use std::fmt;
 use std::sync::Arc;
 use sylphie_core::errors::*;
 
@@ -28,6 +29,23 @@ pub struct Disambiguated<T: CanDisambiguate> {
 
     /// The list of prefixes allowed for this item, in order from longest to shortest.
     pub allowed_prefixes: Arc<[Arc<str>]>,
+}
+impl <T: CanDisambiguate> Disambiguated<T> {
+    /// Returns the shortest unambigious name for this command.
+    pub fn disambiguated_name(&self) -> impl fmt::Display + '_ {
+        FormatDisambiguated(self)
+    }
+}
+
+struct FormatDisambiguated<'a, T: CanDisambiguate>(&'a Disambiguated<T>);
+impl <'a, T: CanDisambiguate> fmt::Display for FormatDisambiguated<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.disambiguated_prefix.is_empty() {
+            f.write_str(self.0.value.name())
+        } else {
+            write!(f, "{}:{}", self.0.disambiguated_prefix, self.0.value.name())
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -109,10 +127,13 @@ impl <T: CanDisambiguate> DisambiguatedSet<T> {
             (name.intern(), map.into_iter().map(|(k, v)| (k, v.into())).collect())
         }).collect();
 
+        // sort the disambiguated list so the ordering doesn't change between runs
+        disambiguated_list.sort_by_cached_key(|x| x.value.full_name().to_string());
+
         DisambiguatedSet { list: disambiguated_list.into(), by_name }
     }
 
-    pub fn all_commands(&self) -> Arc<[Arc<Disambiguated<T>>]> {
+    pub fn list(&self) -> Arc<[Arc<Disambiguated<T>>]> {
         self.list.clone()
     }
 

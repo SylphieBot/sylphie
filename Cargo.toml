@@ -8,7 +8,7 @@ members = [
     "sylphie/sylphie_utils",
 
     # Modules
-    "sylphie_mod_management",
+    "sylphie_mod_core",
 
     # Misc
     "sylphie_test_bot",
