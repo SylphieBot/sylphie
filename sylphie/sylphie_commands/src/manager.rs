@@ -61,9 +61,9 @@ impl CommandManager {
     }
 
     /// Returns a list of all commands currently registered.
-    pub fn command_list(&self) -> Arc<[Arc<Disambiguated<Command>>]> {
+    pub fn command_list(&self) -> Arc<[Disambiguated<Command>]> {
         self.0.data.load().as_ref()
-            .map_or_else(|| self.0.null.list(), |x| x.list())
+            .map_or_else(|| self.0.null.list_arc(), |x| x.list_arc())
     }
 
     /// Looks ups a command for a given context.
