@@ -59,6 +59,15 @@ impl CommandManager {
             .map_or_else(|| self.0.null.list_arc(), |x| x.list_arc())
     }
 
+    /// Looks up a raw command, without regard for permissions, etc.
+    pub fn lookup_command_raw(
+        &self, command: &str,
+    ) -> Result<LookupResult<Disambiguated<Command>>> {
+        let data = self.0.data.load();
+        let data = data.as_ref().map_or(&self.0.null, |x| &*x);
+        data.resolve(command)
+    }
+
     /// Looks ups a command for a given context.
     pub async fn lookup_command(
         &self, ctx: &CommandCtx<impl Events>, command: &str,

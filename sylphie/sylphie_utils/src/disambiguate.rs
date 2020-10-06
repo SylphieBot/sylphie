@@ -8,15 +8,20 @@ use std::ops::Deref;
 use std::sync::Arc;
 use sylphie_core::errors::*;
 
-/// Stores the name for a given entry in an [`DisambiguatedSet`].
+/// Returns the data underlying this entry name.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
-pub struct EntryName {
+pub struct EntryNameData {
     pub prefix: Arc<str>,
     pub name: Arc<str>,
     pub full_name: Arc<str>,
     pub lc_name: Arc<str>,
+    pub is_truncated: bool,
     _priv: (),
 }
+
+/// Stores the name for a given entry in an [`DisambiguatedSet`].
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
+pub struct EntryName(Arc<EntryNameData>);
 impl EntryName {
     /// Creates a new entry name.
     pub fn new(
@@ -32,7 +37,9 @@ impl EntryName {
             format!("{}:{}", prefix, name).intern()
         };
         let lc_name = full_name.to_ascii_lowercase().intern();
-        EntryName { prefix, name, full_name, lc_name, _priv: () }
+        EntryName(Arc::new(EntryNameData {
+            prefix, name, full_name, lc_name, is_truncated: false, _priv: ()
+        }))
     }
 
     /// Returns this name with a different prefix.
@@ -40,11 +47,18 @@ impl EntryName {
         EntryName::new(prefix, self.name.clone())
     }
 
+    /// Marks the is_truncated flag on this entry.
+    pub fn mark_truncated(&self) -> Self {
+        let mut entry = (*self.0).clone();
+        entry.is_truncated = true;
+        EntryName(Arc::new(entry))
+    }
+
     fn variants(&self) -> Vec<EntryName> {
         let mut vec = Vec::new();
-        vec.push(self.with_prefix(""));
+        vec.push(self.with_prefix("").mark_truncated());
         for (i, _) in self.prefix.char_indices().filter(|(_, c)| *c == '.') {
-            vec.push(self.with_prefix(&self.prefix[..i]));
+            vec.push(self.with_prefix(&self.prefix[..i]).mark_truncated());
         }
         vec.push(self.clone());
         vec
@@ -53,6 +67,12 @@ impl EntryName {
 impl fmt::Display for EntryName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.full_name)
+    }
+}
+impl Deref for EntryName {
+    type Target = EntryNameData;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -74,6 +94,9 @@ pub struct DisambiguatedData<T> {
     ///
     /// If multiple command names are allowed, the order is not guaranteed.
     pub all_names: Arc<[EntryName]>,
+
+    /// The list of all full names for this item.
+    pub full_names: Arc<[EntryName]>,
 }
 
 #[derive(Debug)]
@@ -155,6 +178,7 @@ impl <T> DisambiguatedSet<T> {
             let mut shortest_name = names[0].clone();
             let mut allowed_names = Vec::new();
             let mut all_names = Vec::new();
+            let mut full_names = Vec::new();
 
             for name in &names {
                 if ids_for_name.get(&*name.lc_name).unwrap().len() == 1 {
@@ -164,6 +188,9 @@ impl <T> DisambiguatedSet<T> {
                     allowed_names.push(name.clone());
                 }
                 all_names.push(name.clone());
+                if !name.is_truncated {
+                    full_names.push(name.clone());
+                }
             }
 
             let disambiguated = Disambiguated(Arc::new(DisambiguatedData {
@@ -171,6 +198,7 @@ impl <T> DisambiguatedSet<T> {
                 shortest_name,
                 allowed_names: allowed_names.into(),
                 all_names: all_names.into(),
+                full_names: full_names.into(),
             }));
             disambiguated_list.push(disambiguated.clone());
             for name in names {
