@@ -53,8 +53,21 @@ impl ModCore {
     }
 
     #[command]
-    async fn cmd_shutdown(&self, target: &Handler<impl Events>) -> Result<()> {
-        target.shutdown_bot();
+    async fn cmd_shutdown(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
+        ctx.handler().shutdown_bot();
+        Ok(())
+    }
+
+    #[command]
+    async fn cmd_show_config(&self, ctx: &CommandCtx<impl Events>) -> Result<()> {
+        ctx.respond("Configuration options:").await?;
+        for cfg in &*ctx.handler().get_service::<ConfigManager>().option_list() {
+            ctx.respond(&format!(
+                "* {}: {}",
+                cfg.shortest_name,
+                cfg.value.get_display(ctx.handler(), ctx.scopes()[0].clone()).await?,
+            )).await?;
+        }
         Ok(())
     }
 }
