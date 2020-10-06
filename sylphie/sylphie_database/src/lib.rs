@@ -1,4 +1,4 @@
-#![feature(const_type_name, const_fn, const_fn_fn_ptr_basics)]
+#![feature(const_type_name, const_fn, const_fn_fn_ptr_basics, const_type_id)]
 
 #[macro_use] extern crate tracing;
 

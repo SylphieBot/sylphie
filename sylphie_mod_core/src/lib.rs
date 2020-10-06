@@ -1,4 +1,5 @@
 use sylphie::commands::manager::CommandManager;
+use sylphie::database::config::*;
 use sylphie::prelude::*;
 use sylphie::utils::disambiguate::LookupResult;
 
@@ -10,12 +11,17 @@ pub struct ModCore {
 
 #[module_impl]
 impl ModCore {
+    #[config]
+    pub const CFG_PREFIX: ConfigKey<String> = config_option!(
+        Any, "prefix f1733370-515d-43f8-87b4-8b2833cfdd9d", || "!".to_string(),
+    );
+
     #[command]
     async fn cmd_help(
-        &self, ctx: &CommandCtx<impl Events>, help_cmd: Option<String>,
+        &self, ctx: &CommandCtx<impl Events>, target_cmd: Option<String>,
     ) -> Result<()> {
         let manager = ctx.handler().get_service::<CommandManager>();
-        if let Some(command) = help_cmd {
+        if let Some(command) = target_cmd {
             match manager.lookup_command_raw(&command)? {
                 LookupResult::Found(cmd) => {
                     ctx.respond("Command full names:").await?;

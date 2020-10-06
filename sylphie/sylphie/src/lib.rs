@@ -95,7 +95,7 @@ pub mod derives {
     #[doc(inline)] pub use sylphie_derive::{
         SylphieModule as Module,
         module_impl_sylphie as module_impl,
-        command,
+        command, config,
     };
     #[doc(inline)] pub use static_events::handlers::event_handler;
 }

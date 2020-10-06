@@ -4,6 +4,7 @@ use crate::connection::*;
 use crate::migrations::*;
 use crate::interner::*;
 use crate::serializable::*;
+use enumset::*;
 use fxhash::{FxHashMap, FxHashSet};
 use static_events::prelude_async::*;
 use std::any::{Any, TypeId};
@@ -17,6 +18,8 @@ use sylphie_utils::disambiguate::*;
 use sylphie_utils::locks::LockSet;
 use sylphie_utils::scopes::Scope;
 use tokio::runtime::Handle;
+
+mod impls;
 
 static CONFIG_MIGRATIONS: MigrationData = MigrationData {
     migration_id: "config 7c8f3471-5ef7-4a8a-9388-36ea9e512a57",
@@ -34,6 +37,27 @@ pub(crate) fn init_config(target: &Handler<impl Events>) -> Result<()> {
     Ok(())
 }
 
+/// Configuration flags for config options.
+#[derive(EnumSetType, Debug)]
+pub enum ConfigFlag {
+    /// This configuration option can be set in the global scope.
+    Global,
+    /// This configuration option can be set in a connection scope.
+    Connection,
+    /// This configuration option can be set in a server scope.
+    ///
+    /// A server is something like a Discord guild or an IRC channel that can be expected to be
+    /// managed by a single moderation team.
+    Server,
+    /// This configuration option can be set in a channel scope.
+    ///
+    /// Note that on platforms like IRC, a channel and a server are the same thing.
+    Channel,
+
+    /// This configuration option can be set in any scope.
+    Any,
+}
+
 pub struct ConfigKey<V: ConfigType>(&'static __macro_priv::ConfigKeyData<V>);
 impl <V: ConfigType> Clone for ConfigKey<V> {
     fn clone(&self) -> Self {
@@ -46,6 +70,7 @@ impl <V: ConfigType> Copy for ConfigKey<V> { }
 #[doc(hidden)]
 pub mod __macro_priv {
     use super::*;
+    pub use enumset;
 
     #[derive(Copy, Clone)]
     pub struct ConfigKeyData<V: ConfigType> {
@@ -53,34 +78,44 @@ pub mod __macro_priv {
         pub(crate) default_value: fn() -> V,
         pub(crate) phantom: PhantomData<V>,
         pub(crate) storage_name: &'static str,
+        pub(crate) flags: EnumSet<ConfigFlag>,
     }
 
     pub const fn new_0<V: ConfigType>(
-        name: &'static str, id: TypeId, default: fn() -> V,
+        name: &'static str, id: TypeId, default: fn() -> V, flags: EnumSet<ConfigFlag>,
     ) -> ConfigKeyData<V> {
-        ConfigKeyData { id, default_value: default, phantom: PhantomData, storage_name: name }
+        ConfigKeyData {
+            id, default_value: default, phantom: PhantomData, storage_name: name, flags,
+        }
     }
     pub const fn new_1<V: ConfigType>(key: &'static ConfigKeyData<V>) -> ConfigKey<V> {
         ConfigKey(key)
+    }
+    pub const fn type_id<A: Any>() -> TypeId {
+        TypeId::of::<A>()
     }
 }
 
 /// Creates a new config option.
 #[macro_export]
 macro_rules! config_option_ff344e40783a4f25b33f98135991d80f {
-    ($storage_name:expr $(,)?) => {{
+    ($($value:path)|* $(|)*, $storage_name:expr $(,)?) => {{
         $crate::config_option_ff344e40783a4f25b33f98135991d80f!(
-            $storage_name, || core::default::Default::default(),
+            $($value|)*, $storage_name, || core::default::Default::default(),
         )
     }};
-    ($storage_name:expr, $default:expr $(,)?) => {{
+    ($($value:path)|* $(|)*, $storage_name:expr, $default:expr $(,)?) => {{
+        use $crate::config::__macro_priv::enumset::enum_set;
+        use $crate::config::ConfigFlag;
+        use $crate::config::ConfigFlag::*;
+
         enum LocalType { }
-        const TYPE_ID: ;
         $crate::config::__macro_priv::new_1(
             &$crate::config::__macro_priv::new_0(
                 $storage_name,
-                core::any::TypeId::of::<LocalType>(),
+                $crate::config::__macro_priv::type_id::<LocalType>(),
                 $default,
+                enum_set!($($value|)*),
             ),
         )
     }};
@@ -214,7 +249,7 @@ impl RegisterConfigEvent {
         }
         self.tid_for_storage.insert(key.0.storage_name, key.0.id);
 
-        let db_id = StringId::intern(target, &entry_name.lc_name).await?;
+        let db_id = StringId::intern(target, key.0.storage_name).await?;
         if let Some(config) = self.configs.get_mut(&key.0.id) {
             if config.db_id == db_id {
                 warn!(

@@ -13,23 +13,27 @@ mod module_impl;
 pub(crate) struct CratePaths {
     core: SynTokenStream,
     commands: SynTokenStream,
+    database: SynTokenStream,
 }
 fn crate_paths_for_sylphie() -> CratePaths {
     CratePaths {
         core: quote! { ::sylphie::__macro_export::sylphie_core },
-        commands: quote! { ::sylphie::__macro_export::sylphie_commands }
+        commands: quote! { ::sylphie::__macro_export::sylphie_commands },
+        database: quote! { ::sylphie::__macro_export::sylphie_database },
     }
 }
 fn crate_paths_for_core() -> CratePaths {
     CratePaths {
         core: quote! { ::sylphie_core },
-        commands: quote! { ::sylphie_commands }
+        commands: quote! { ::sylphie_commands },
+        database: quote! { ::sylphie_database },
     }
 }
 fn crate_paths_for_core_internal() -> CratePaths {
     CratePaths {
         core: quote! { crate },
         commands: quote! { __CANNOT_USE_COMMANDS_IN_CORE_INTERNAL__ },
+        database: quote! { __CANNOT_USE_COMMANDS_IN_CORE_INTERNAL__ },
     }
 }
 
@@ -63,3 +67,4 @@ pub fn module_impl_core(_: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 derived_attr!(command, module_impl);
+derived_attr!(config, module_impl);
