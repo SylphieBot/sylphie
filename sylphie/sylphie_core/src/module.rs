@@ -61,7 +61,7 @@ struct ModuleInfoInternal {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct ModuleInfo(Option<ModuleInfoInternal>);
+pub struct ModuleInfo(Option<Arc<ModuleInfoInternal>>);
 impl ModuleInfo {
     pub fn id(&self) -> ModuleId {
         self.0.as_ref().expect("Module not yet initialized!").id
@@ -79,7 +79,7 @@ impl ModuleInfo {
         if self.0.is_some() {
             panic!("Module is already initialized!");
         }
-        self.0 = Some(data);
+        self.0 = Some(Arc::new(data));
     }
 }
 

@@ -4,7 +4,7 @@ use crate::ctx::CommandCtx;
 use static_events::prelude_async::*;
 use std::sync::Arc;
 use sylphie_core::errors::*;
-use sylphie_utils::disambiguate::{CanDisambiguate, DisambiguatedSet, Disambiguated, LookupResult};
+use sylphie_utils::disambiguate::{DisambiguatedSet, Disambiguated, LookupResult};
 
 /// The event used to register commands.
 #[derive(Debug, Default)]
@@ -16,20 +16,6 @@ impl RegisterCommandsEvent {
     /// Registers a new command.
     pub fn register_command(&mut self, command: Command) {
         self.commands.push(command);
-    }
-}
-
-impl CanDisambiguate for Command {
-    const CLASS_NAME: &'static str = "command";
-
-    fn name(&self) -> &str {
-        self.name()
-    }
-    fn full_name(&self) -> &str {
-        self.full_name()
-    }
-    fn module_name(&self) -> &str {
-        self.module_name()
     }
 }
 
@@ -47,16 +33,23 @@ struct CommandManagerData {
 impl CommandManager {
     pub(crate) fn new() -> Self {
         CommandManager(Arc::new(CommandManagerData {
-            null: DisambiguatedSet::new(Vec::new()),
+            null: DisambiguatedSet::new("command", Vec::new()),
             data: ArcSwapOption::new(None),
         }))
     }
 
     /// Reloads the command manager.
     pub async fn reload(&self, target: &Handler<impl Events>) {
-        let new_set = DisambiguatedSet::new(target.dispatch_async(RegisterCommandsEvent {
+        let commands = target.dispatch_async(RegisterCommandsEvent {
             commands: Vec::new(),
-        }).await.commands);
+        }).await.commands;
+        let mut marked_commands = Vec::new();
+        for command in commands {
+            let name = command.entry_name().clone();
+            marked_commands.push((name, command));
+        }
+
+        let new_set = DisambiguatedSet::new("command", marked_commands);
         self.0.data.store(Some(Arc::new(new_set)));
     }
 

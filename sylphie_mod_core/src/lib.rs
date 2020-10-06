@@ -16,7 +16,7 @@ impl ModCore {
         ctx.respond("Available commands:").await?;
         for command in &*ctx.handler().get_service::<CommandManager>().command_list() {
             ctx.respond(&format!(
-                "* {}", command.disambiguated_name(),
+                "* {}", command.shortest_name.full_name,
             )).await?;
         }
         Ok(())

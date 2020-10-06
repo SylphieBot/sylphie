@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use sylphie_core::errors::*;
 use sylphie_core::module::*;
+use sylphie_utils::disambiguate::EntryName;
 
 /// The metadata relating to a command.
 #[derive(Debug, Setters)]
@@ -46,11 +47,10 @@ pub trait CommandImpl: Send + Sync + 'static {
 #[derive(Clone)]
 pub struct Command(Arc<CommandData>);
 struct CommandData {
-    module_name: Arc<str>,
     module_info: Option<ModuleInfo>,
     info: CommandInfo,
-    full_name: String,
     command_impl: Box<dyn CommandImplWrapper>,
+    entry_name: EntryName,
 }
 impl Command {
     /// Creates a new command.
@@ -82,12 +82,11 @@ impl Command {
         module_name: Arc<str>, module_info: Option<&ModuleInfo>, cmd_info: CommandInfo,
         command_impl: Box<dyn CommandImplWrapper>,
     ) -> Self {
-        let full_name = format!("{}:{}", module_name, cmd_info.name);
+        let entry_name = EntryName::new(module_name, &*cmd_info.name);
         Command(Arc::new(CommandData {
-            module_name,
             module_info: module_info.map(Clone::clone),
             info: cmd_info,
-            full_name,
+            entry_name,
             command_impl,
         }))
     }
@@ -107,7 +106,7 @@ impl Command {
     /// This is not necessarily the module is actually defined in, or a module that actually
     /// exists. This is primarily meant for use in disambiguating commands.
     pub fn module_name(&self) -> &str {
-        &self.0.module_name
+        &self.0.entry_name.prefix
     }
 
     /// Returns the short name of the command.
@@ -117,7 +116,12 @@ impl Command {
 
     /// Returns the full name of the command.
     pub fn full_name(&self) -> &str {
-        &self.0.full_name
+        &self.0.entry_name.full_name
+    }
+
+    /// Returns the entry name of this command, for disambiguation purposes.
+    pub fn entry_name(&self) -> &EntryName {
+        &self.0.entry_name
     }
 
     /// Returns information about the module that defines this command, if one exists.
@@ -132,7 +136,7 @@ impl Command {
 }
 impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[Command '{}']", self.0.full_name)
+        write!(f, "[Command '{}']", self.0.entry_name.full_name)
     }
 }
 

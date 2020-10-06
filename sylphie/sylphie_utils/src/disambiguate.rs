@@ -2,69 +2,63 @@
 
 use crate::strings::InternString;
 use fxhash::{FxHashMap, FxHashSet};
-use std::fmt;
 use std::hash::Hash;
+use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 use sylphie_core::errors::*;
 
-/// A trait for items that can be disambiguated between modules.
-pub trait CanDisambiguate {
-    /// The display name for the type of object this is.
-    const CLASS_NAME: &'static str;
-
-    /// Returns the name of the disambiguated item.
-    fn name(&self) -> &str;
-
-    /// Returns the full name of the disambiguated item.
-    fn full_name(&self) -> &str;
-
-    /// Returns the name of the module this disambiguated item is in.
-    fn module_name(&self) -> &str;
-}
-
-/// A trait for items that can be disambiguated between modules, but still map to the same
-/// underlying value.
-pub trait CanDisambiguateAliased : CanDisambiguate {
-    type AliasId: Eq + Hash + Copy;
-    fn alias_id(&self) -> Self::AliasId;
-}
-
 /// Stores the name for a given entry in an [`DisambiguatedSet`].
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash)]
 pub struct EntryName {
     pub prefix: Arc<str>,
     pub name: Arc<str>,
+    pub full_name: Arc<str>,
+    pub lc_name: Arc<str>,
+    _priv: (),
 }
 impl EntryName {
-    /// Displays this entry
-    pub fn display(&self) -> impl fmt::Display + '_ {
-        FormatEntryName(self)
+    /// Creates a new entry name.
+    pub fn new(
+        prefix: impl InternString<InternedType = Arc<str>>,
+        name: impl InternString<InternedType = Arc<str>>
+    ) -> Self {
+        Self::new_0(prefix.intern(), name.intern())
+    }
+    fn new_0(prefix: Arc<str>, name: Arc<str>) -> Self {
+        let full_name = if prefix.is_empty() {
+            name.intern()
+        } else {
+            format!("{}:{}", prefix, name).intern()
+        };
+        let lc_name = full_name.to_ascii_lowercase().intern();
+        EntryName { prefix, name, full_name, lc_name, _priv: () }
     }
 
-    fn full_len(&self) -> usize {
-        if self.prefix.is_empty() {
-            self.name.len()
-        } else {
-            self.prefix.len() + 1 + self.name.len()
+    /// Returns this name with a different prefix.
+    pub fn with_prefix(&self, prefix: impl InternString<InternedType = Arc<str>>) -> Self {
+        EntryName::new(prefix, self.name.clone())
+    }
+
+    fn variants(&self) -> Vec<EntryName> {
+        let mut vec = Vec::new();
+        vec.push(self.with_prefix(""));
+        for (i, _) in self.prefix.char_indices().filter(|(_, c)| *c == '.') {
+            vec.push(self.with_prefix(&self.prefix[..i]));
         }
+        vec.push(self.clone());
+        vec
     }
 }
-
-struct FormatEntryName<'a>(&'a EntryName);
-impl <'a> fmt::Display for FormatEntryName<'a> {
+impl fmt::Display for EntryName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.prefix.is_empty() {
-            f.write_str(&self.0.name)
-        } else {
-            write!(f, "{}:{}", self.0.prefix, self.0.name)
-        }
+        f.write_str(&self.full_name)
     }
 }
 
 /// The data contained within an [`Disambiguated`] value.
 #[derive(Debug)]
-pub struct DisambiguatedData<T: CanDisambiguate> {
+pub struct DisambiguatedData<T> {
     /// The actual disambiguated value.
     pub value: T,
 
@@ -83,121 +77,123 @@ pub struct DisambiguatedData<T: CanDisambiguate> {
 }
 
 #[derive(Debug)]
-pub struct Disambiguated<T: CanDisambiguate>(Arc<DisambiguatedData<T>>);
-impl <T: CanDisambiguate> Deref for Disambiguated<T> {
+pub struct Disambiguated<T>(Arc<DisambiguatedData<T>>);
+impl <T> Deref for Disambiguated<T> {
     type Target = DisambiguatedData<T>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
-impl <T: CanDisambiguate> Clone for Disambiguated<T> {
+impl <T> Clone for Disambiguated<T> {
     fn clone(&self) -> Self {
         Disambiguated(self.0.clone())
     }
 }
 
 #[derive(Debug)]
-pub struct DisambiguatedSet<T: CanDisambiguate> {
+pub struct DisambiguatedSet<T> {
+    class_name: String,
     list: Arc<[Disambiguated<T>]>,
     // a map of {base command name -> {possible prefix -> [possible commands]}}
     // an unprefixed command looks up an empty prefix
-    by_name: FxHashMap<Arc<str>, FxHashMap<Arc<str>, Box<[Disambiguated<T>]>>>,
+    by_name: FxHashMap<Arc<str>, Box<[Disambiguated<T>]>>,
 }
-impl <T: CanDisambiguate> DisambiguatedSet<T> {
-    pub fn new(values: Vec<T>) -> Self {
+impl <T> DisambiguatedSet<T> {
+    pub fn new(class_name: &str, values: Vec<(EntryName, T)>) -> Self {
+        Self::new_aliased(
+            class_name,
+            values.into_iter().enumerate().map(|(i, (n, v))| (n, v, i)).collect()
+        )
+    }
+
+    pub fn new_aliased<A: Eq + Hash + Copy>(
+        class_name: &str,
+        values: Vec<(EntryName, T, A)>,
+    ) -> Self {
+        // Sorts the raw values vector into a series of maps that are easier to process.
+        //
+        // This step checks for duplicate entries and handles aliased IDs.
         let mut duplicate_check = FxHashSet::default();
-        let mut values_for_name = FxHashMap::default();
-        let mut root_warning_given = false;
-        for value in values {
-            let lc_name = value.full_name().to_ascii_lowercase();
-            if duplicate_check.contains(&lc_name) {
+        let mut ids_for_name = FxHashMap::default();
+        let mut values_for_id = FxHashMap::default();
+        let mut names_for_id = FxHashMap::default();
+        for (name, value, alias_id) in values {
+            if duplicate_check.contains(&*name.lc_name) {
                 warn!(
                     "Found duplicated {} `{}`. Only one of the copies will be accessible.",
-                    T::CLASS_NAME, value.full_name(),
+                    class_name, name.full_name,
                 );
             } else {
-                if !root_warning_given && value.module_name() == "__root__" {
+                if &*name.prefix == "__root__" {
                     warn!(
-                        "It is not recommended to define a {} in the root module.",
-                        T::CLASS_NAME,
+                        "It is not recommended to define a {} in the root module: `{}`",
+                        class_name, name.full_name,
                     );
-                    root_warning_given = true;
                 }
+                duplicate_check.insert(name.lc_name.clone());
 
-                duplicate_check.insert(lc_name);
-                values_for_name.entry(value.name().to_ascii_lowercase())
-                    .or_insert(Vec::new()).push(value);
+                for variant_name in name.variants() {
+                    ids_for_name
+                        .entry(variant_name.lc_name.clone())
+                        .or_insert_with(FxHashSet::default)
+                        .insert(alias_id);
+                    names_for_id.entry(alias_id).or_insert_with(Vec::new).push(variant_name);
+                }
+                values_for_id.insert(alias_id, value);
             }
         }
         std::mem::drop(duplicate_check);
 
+        // Create the list of `Disambiguated` objects that store metadata about the entries, and
+        // create the main lookup map.
         let mut disambiguated_list = Vec::new();
-        let by_name = values_for_name.into_iter().map(|(name, variants)| {
-            let name = name.intern();
+        let mut disambiguated_map = FxHashMap::default();
+        for (id, value) in values_for_id {
+            let mut names = names_for_id.remove(&id).unwrap();
+            names.sort_by_cached_key(|x| x.full_name.clone());
 
-            let mut prefix_count = FxHashMap::default();
-            let mut variants_temp = Vec::new();
-            for variant in variants {
-                let mod_name = variant.module_name().to_ascii_lowercase();
-                let full_name = variant.full_name().to_ascii_lowercase().intern();
+            let mut shortest_name = names[0].clone();
+            let mut allowed_names = Vec::new();
+            let mut all_names = Vec::new();
 
-                let mut prefixes = Vec::new();
-                prefixes.push(full_name);
-                for (i, _) in mod_name.char_indices().filter(|(_, c)| *c == '.') {
-                    prefixes.push(mod_name[i+1..].to_string().intern());
+            for name in &names {
+                if ids_for_name.get(&*name.lc_name).unwrap().len() == 1 {
+                    if name.full_name.len() < shortest_name.full_name.len() {
+                        shortest_name = name.clone();
+                    }
+                    allowed_names.push(name.clone());
                 }
-                prefixes.push("".intern());
-
-                for prefix in &prefixes {
-                    *prefix_count.entry(prefix.clone()).or_insert(0) += 1;
-                }
-
-                variants_temp.push((prefixes, variant));
+                all_names.push(name.clone());
             }
 
-            let mut map = FxHashMap::default();
-            for (prefixes, variant) in variants_temp {
-                let mut shortest_prefix = prefixes[0].clone();
-                for prefix in &prefixes {
-                    if *prefix_count.get(prefix).unwrap() == 1 {
-                        shortest_prefix = prefix.clone();
-                    }
-                }
-
-                let mut allowed_names = Vec::new();
-                let mut all_names = Vec::new();
-                for prefix in &prefixes {
-                    let entry = EntryName {
-                        prefix: prefix.clone(),
-                        name: name.clone(),
-                    };
-                    all_names.push(entry.clone());
-                    if *prefix_count.get(prefix).unwrap() == 1 {
-                        allowed_names.push(entry);
-                    }
-                }
-
-                let entry = Disambiguated(Arc::new(DisambiguatedData {
-                    value: variant,
-                    shortest_name: EntryName {
-                        prefix: shortest_prefix,
-                        name: name.clone(),
-                    },
-                    allowed_names: allowed_names.into(),
-                    all_names: all_names.into(),
-                }));
-                for prefix in prefixes {
-                    map.entry(prefix).or_insert(Vec::new()).push(entry.clone());
-                }
-                disambiguated_list.push(entry);
+            let disambiguated = Disambiguated(Arc::new(DisambiguatedData {
+                value,
+                shortest_name,
+                allowed_names: allowed_names.into(),
+                all_names: all_names.into(),
+            }));
+            disambiguated_list.push(disambiguated.clone());
+            for name in names {
+                disambiguated_map
+                    .entry(name.lc_name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(disambiguated.clone());
             }
-            (name.intern(), map.into_iter().map(|(k, v)| (k, v.into())).collect())
-        }).collect();
+        }
+        std::mem::drop(names_for_id);
 
-        // sort the disambiguated list so the ordering doesn't change between runs
-        disambiguated_list.sort_by_cached_key(|x| x.value.full_name().to_string());
+        // Sort the disambiguated list so the ordering doesn't change between runs
+        disambiguated_list.sort_by_cached_key(|x| x.shortest_name.full_name.clone());
+        for (_, values) in &mut disambiguated_map {
+            values.sort_by_cached_key(|x| x.shortest_name.full_name.clone());
+        }
 
-        DisambiguatedSet { list: disambiguated_list.into(), by_name }
+        // Create the actual full set
+        DisambiguatedSet {
+            class_name: class_name.to_string(),
+            list: disambiguated_list.into(),
+            by_name: disambiguated_map.into_iter().map(|(k, v)| (k, v.into())).collect(),
+        }
     }
 
     pub fn list(&self) -> &[Disambiguated<T>] {
@@ -211,17 +207,16 @@ impl <T: CanDisambiguate> DisambiguatedSet<T> {
     pub fn resolve_iter<'a>(
         &'a self, raw_name: &str,
     ) -> Result<impl Iterator<Item = Disambiguated<T>> + 'a> {
-        let lc_name = raw_name.to_ascii_lowercase();
-        let split: Vec<_> = lc_name.split(':').collect();
-        let (group, name) = match split.as_slice() {
-            &[name] => ("", name),
-            &[group, name] => (group, name),
-            _ => cmd_error!("No more than one `:` can appear in a {} name.", T::CLASS_NAME),
-        };
+        let mut lc_name = raw_name.to_ascii_lowercase();
+        if lc_name.chars().filter(|x| *x == ':').count() > 1 {
+            cmd_error!("No more than one `:` can appear in a {} name.", self.class_name);
+        }
+        if lc_name.starts_with(':') {
+            lc_name = lc_name[1..].to_string();
+        }
 
         let list = self.by_name
-            .get(name)
-            .and_then(|x| x.get(group))
+            .get(&*lc_name)
             .map(|x| &**x)
             .unwrap_or(&[]);
         Ok(list.iter().map(|x| x.clone()))
@@ -267,134 +262,5 @@ impl <T> LookupResult<T> {
             LookupResult::Found(v) => LookupResult::Found(f(v)),
             LookupResult::Ambigious(v) => LookupResult::Ambigious(v.into_iter().map(f).collect()),
         }
-    }
-}
-
-#[derive(Debug)]
-struct ConfigNameKey<T: CanDisambiguateAliased> {
-    id: T::AliasId,
-    name: Arc<str>,
-    module_name: Arc<str>,
-    full_name: Arc<str>,
-}
-impl <T: CanDisambiguateAliased> CanDisambiguate for ConfigNameKey<T> {
-    const CLASS_NAME: &'static str = T::CLASS_NAME;
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn full_name(&self) -> &str {
-        &self.full_name
-    }
-    fn module_name(&self) -> &str {
-        &self.module_name
-    }
-}
-
-#[derive(Debug)]
-pub struct AliasedDisambiguatedSet<T: CanDisambiguateAliased> {
-    underlying: DisambiguatedSet<ConfigNameKey<T>>,
-    lookup: Arc<FxHashMap<T::AliasId, Disambiguated<T>>>,
-    list: Arc<[Disambiguated<T>]>,
-}
-impl <T: CanDisambiguateAliased> AliasedDisambiguatedSet<T> {
-    pub fn new(values: Vec<T>) -> Self {
-        let mut id_vec = Vec::new();
-        let mut value_map = FxHashMap::default();
-        for value in values {
-            id_vec.push(ConfigNameKey::<T> {
-                id: value.alias_id(),
-                name: value.name().intern(),
-                module_name: value.module_name().intern(),
-                full_name: value.full_name().intern(),
-            });
-            value_map.insert(value.alias_id(), value);
-        }
-        let underlying = DisambiguatedSet::new(id_vec);
-
-        let mut alias_values = FxHashMap::default();
-        for id in underlying.list() {
-            alias_values.entry(id.value.id)
-                .or_insert_with(Vec::new)
-                .push(id.clone())
-        }
-
-        let mut lookup = FxHashMap::default();
-        let mut list = Vec::new();
-        for (id, mut aliased) in alias_values {
-            aliased.sort_by_cached_key(|x| x.shortest_name.clone());
-
-            let mut shortest_name = aliased[0].shortest_name.clone();
-            let mut all_names = Vec::new();
-            let mut allowed_names = Vec::new();
-
-            for alias in aliased {
-                for name in &*alias.all_names {
-                    all_names.push(name.clone());
-                }
-                for name in &*alias.allowed_names {
-                    allowed_names.push(name.clone());
-                }
-                if alias.shortest_name.full_len() < shortest_name.full_len() {
-                    shortest_name = alias.shortest_name.clone()
-                }
-            }
-
-            let value = Disambiguated(Arc::new(DisambiguatedData {
-                value: value_map.remove(&id).unwrap(),
-                shortest_name,
-                allowed_names: allowed_names.into(),
-                all_names: all_names.into(),
-            }));
-            list.push(value.clone());
-            lookup.insert(id, value);
-        }
-
-        // sort the disambiguated list so the ordering doesn't change between runs
-        list.sort_by_cached_key(|x| x.all_names[0].display().to_string());
-
-        AliasedDisambiguatedSet {
-            underlying,
-            lookup: Arc::new(lookup),
-            list: list.into(),
-        }
-    }
-
-    pub fn list(&self) -> &[Disambiguated<T>] {
-        &self.list
-    }
-
-    pub fn list_arc(&self) -> Arc<[Disambiguated<T>]> {
-        self.list.clone()
-    }
-
-    pub fn resolve_iter<'a>(
-        &'a self, raw_name: &str,
-    ) -> Result<impl Iterator<Item = Disambiguated<T>> + 'a> {
-        let mut already_found = FxHashSet::default();
-        let lookup = self.lookup.clone();
-        Ok(self.underlying.resolve_iter(raw_name)?
-            .filter(move |x| {
-                if already_found.contains(&x.value.id) {
-                    false
-                } else {
-                    already_found.insert(x.value.id);
-                    true
-                }
-            })
-            .map(move |x| {
-                lookup.get(&x.value.id).unwrap().clone()
-            }))
-    }
-
-    pub fn resolve(&self, raw_name: &str) -> Result<LookupResult<Disambiguated<T>>> {
-        let mut vec = Vec::new();
-        for item in self.resolve_iter(raw_name)? {
-            vec.push(item.clone());
-        }
-        Ok(LookupResult::new(vec))
-    }
-
-    pub fn resolve_cloned(&self, raw_name: &str) -> Result<LookupResult<T>> where T: Clone {
-        Ok(self.resolve(raw_name)?.map(|x| x.value.clone()))
     }
 }

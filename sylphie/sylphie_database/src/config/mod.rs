@@ -16,7 +16,6 @@ use sylphie_utils::cache::LruCache;
 use sylphie_utils::disambiguate::*;
 use sylphie_utils::locks::LockSet;
 use sylphie_utils::scopes::Scope;
-use sylphie_utils::strings::InternString;
 use tokio::runtime::Handle;
 
 static CONFIG_MIGRATIONS: MigrationData = MigrationData {
@@ -25,7 +24,7 @@ static CONFIG_MIGRATIONS: MigrationData = MigrationData {
     is_transient: false,
     target_version: 1,
     scripts: &[
-        migration_script!(0, 1, "sql/config_0_to_1.sql"),
+        migration_script!(0, 1, "config_0_to_1.sql"),
     ],
 };
 pub(crate) fn init_config(target: &Handler<impl Events>) -> Result<()> {
@@ -163,7 +162,7 @@ impl <'a, T: ConfigType> fmt::Display for DisplayConfigType<'a, T> {
 
 /// A dynamically loaded configuration key used for configuration purposes.
 pub struct RegisteredConfig {
-    module_names: Vec<(Arc<str>, Arc<str>, Arc<str>)>,
+    entry_names: Vec<EntryName>,
     db_id: StringId,
     dyn_config: Box<dyn DynConfigType>,
 }
@@ -196,15 +195,13 @@ impl RegisterConfigEvent {
         &'a mut self, target: &'a Handler<impl Events>,
         module: &'a ModuleInfo, name: &'a str, key: &'static ConfigKey<V>,
     ) -> Result<()> {
-        let module_name = module.name().intern();
-        let key_name = name.intern();
-        let full_name = format!("{}:{}", module.name(), name).intern();
+        let entry_name = EntryName::new(module.name(), name);
 
-        if self.found_names.contains(&full_name) {
-            error!("Duplicate configuration option '{}'.", full_name);
+        if self.found_names.contains(&*entry_name.lc_name) {
+            error!("Duplicate configuration option '{}'.", entry_name.full_name);
             bail!("Duplicate configuration option.");
         }
-        self.found_names.insert(full_name.clone());
+        self.found_names.insert(entry_name.lc_name.clone());
 
         if let Some(tid) = self.tid_for_storage.get(&key.0.storage_name) {
             if *tid != key.0.id {
@@ -217,7 +214,7 @@ impl RegisterConfigEvent {
         }
         self.tid_for_storage.insert(key.0.storage_name, key.0.id);
 
-        let db_id = StringId::intern(target, &full_name).await?;
+        let db_id = StringId::intern(target, &entry_name.lc_name).await?;
         if let Some(config) = self.configs.get_mut(&key.0.id) {
             if config.db_id == db_id {
                 warn!(
@@ -228,10 +225,10 @@ impl RegisterConfigEvent {
             } else {
                 bail!("Impossible: Different storage IDs for same underlying ID.");
             }
-            config.module_names.push((module_name, key_name, full_name));
+            config.entry_names.push(entry_name);
         } else {
             self.configs.insert(key.0.id, RegisteredConfig {
-                module_names: vec![(module_name, key_name, full_name)],
+                entry_names: vec![entry_name],
                 db_id,
                 dyn_config: Box::new(DynConfigKey::new(target, *key)),
             });
@@ -241,49 +238,20 @@ impl RegisterConfigEvent {
     }
 }
 
-struct ConfigNameKey {
-    instance: Arc<RegisteredConfig>,
-    name: Arc<str>,
-    module_name: Arc<str>,
-    full_name: Arc<str>,
-}
-impl CanDisambiguate for ConfigNameKey {
-    const CLASS_NAME: &'static str = "configuration option";
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn full_name(&self) -> &str {
-        &self.full_name
-    }
-    fn module_name(&self) -> &str {
-        &self.module_name
-    }
-}
-
 struct ConfigManagerData {
-    list: Arc<[Arc<RegisteredConfig>]>,
-    disambiguate: DisambiguatedSet<ConfigNameKey>,
+    disambiguate: DisambiguatedSet<Arc<RegisteredConfig>>,
 }
 impl ConfigManagerData {
     fn from_event(ev: RegisterConfigEvent) -> Self {
-        let mut list = Vec::new();
-        let mut disambiguated_list = Vec::new();
+        let mut vec = Vec::new();
         for (_, config) in ev.configs {
             let config = Arc::new(config);
-            for (module_name, key_name, full_name) in &config.module_names {
-                disambiguated_list.push(ConfigNameKey {
-                    instance: config.clone(),
-                    name: key_name.clone(),
-                    module_name: module_name.clone(),
-                    full_name: full_name.clone(),
-                });
+            for entry in &config.entry_names {
+                vec.push((entry.clone(), config.clone(), config.db_id));
             }
-            list.push(config);
         }
-
         ConfigManagerData {
-            list: list.into(),
-            disambiguate: DisambiguatedSet::new(disambiguated_list),
+            disambiguate: DisambiguatedSet::new_aliased("config option", vec),
         }
     }
 }
@@ -402,9 +370,9 @@ impl ConfigManager {
     }
 
     /// Returns a list of all options currently registered.
-    pub fn option_list(&self) -> Arc<[Arc<RegisteredConfig>]> {
+    pub fn option_list(&self) -> Arc<[Disambiguated<Arc<RegisteredConfig>>]> {
         self.options.load().as_ref()
-            .map(|x| x.list.clone())
+            .map(|x| x.disambiguate.list_arc())
             .expect("Config manager is not loaded.")
     }
 
@@ -415,7 +383,7 @@ impl ConfigManager {
 
         let mut valid_options = Vec::new();
         for option in options.disambiguate.resolve_iter(option)? {
-            valid_options.push(option.value.instance.clone());
+            valid_options.push(option.value.clone());
         }
         Ok(ConfigLookupResult::new(valid_options))
     }
