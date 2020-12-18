@@ -62,21 +62,20 @@ pub struct DatabaseModule {
 impl DatabaseModule {
     #[event_handler(EvInit)]
     fn init_database(&self, target: &Handler<impl Events>, _: &EarlyInitEvent) {
-        if let Err(e) = self.early_init_db(target) {
+        let handle = Handle::current();
+        if let Err(e) = handle.block_on(self.early_init_db(target)) {
             e.report_error();
             panic!("Error occurred during early database initialization.");
         }
-
-        let handle = Handle::current();
         if let Err(e) = handle.block_on(target.dispatch_async(InitDbEvent(()))) {
             e.report_error();
             panic!("Error occurred during database initialization.");
         }
     }
 
-    fn early_init_db(&self, target: &Handler<impl Events>) -> Result<()> {
+    async fn early_init_db(&self, target: &Handler<impl Events>) -> Result<()> {
         self.init_db_paths(target)?;
-        self.init_serializers(target)?;
+        self.init_serializers(target).await?;
         Ok(())
     }
 
@@ -97,10 +96,10 @@ impl DatabaseModule {
         Ok(())
     }
 
-    fn init_serializers(&self, target: &Handler<impl Events>) -> Result<()> {
-        crate::interner::init_interner(target)?;
-        crate::kvs::init_kvs(target)?;
-        crate::config::init_config(target)?;
+    async fn init_serializers(&self, target: &Handler<impl Events>) -> Result<()> {
+        crate::interner::init_interner(target).await?;
+        crate::kvs::init_kvs(target).await?;
+        crate::config::init_config(target).await?;
         Ok(())
     }
 

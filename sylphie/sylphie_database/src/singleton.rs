@@ -13,12 +13,12 @@ use tokio::sync::{RwLock, RwLockWriteGuard};
 #[derive(Serialize, Deserialize, Clone)]
 struct SingletonData {
     value: SerializeValue,
-    ser_id: u64,
+    ser_id: StringId,
     ser_ver: u32,
     exists: bool,
 }
 impl DbSerializable for SingletonData {
-    type Format = BincodeFormat;
+    type Format = CborFormat;
     const ID: &'static str = "sylphie_database::singleton::SingletonData";
     const SCHEMA_VERSION: u32 = 0;
 }
@@ -32,7 +32,7 @@ pub(crate) struct SingletonDataStore {
 
 struct InitData {
     kvs: Arc<KvsStore<Arc<str>, SingletonData>>,
-    ser_id: u64,
+    ser_id: StringId,
 }
 
 /// The base type for KVS stores backed by the database.
@@ -55,13 +55,12 @@ impl <V: Default + DbSerializable> SingletonStore<V> {
         &self, target: &Handler<impl Events>, _: &crate::InitDbEvent,
     ) -> Result<()> {
         let underlying = target.get_service::<SingletonDataStore>().singletons.clone();
-        let interner = target.get_service::<Interner>();
         self.data_store.store(Some(Arc::new(InitData {
             kvs: underlying,
-            ser_id: interner.lock().get_ser_id(V::ID),
+            ser_id: StringId::intern(target, V::ID).await?,
         })));
         self.init_underlying().await?;
-        self.read_db(interner).await?;
+        self.read_db(target).await?;
         Ok(())
     }
 
@@ -71,7 +70,7 @@ impl <V: Default + DbSerializable> SingletonStore<V> {
         let mut underlying = data.kvs.get_mut(
             self.info.arc_name(), || Ok(SingletonData {
                 value: SerializeValue::Null,
-                ser_id: 0,
+                ser_id: StringId::default(),
                 ser_ver: 0,
                 exists: false,
             }),
@@ -85,7 +84,7 @@ impl <V: Default + DbSerializable> SingletonStore<V> {
         }
         Ok(())
     }
-    async fn read_db(&self, interner: &Interner) -> Result<()> {
+    async fn read_db(&self, target: &Handler<impl Events>) -> Result<()> {
         let mut lock = self.cached_instance.write().await;
         let data = self.data_store.load();
         let data = data.as_ref().unwrap();
@@ -94,13 +93,13 @@ impl <V: Default + DbSerializable> SingletonStore<V> {
         if underlying.ser_id == data.ser_id && underlying.ser_ver == V::SCHEMA_VERSION {
             *lock = Some(V::Format::deserialize(underlying.value)?);
         } else {
-            let migration_id = interner.lock().get_ser_id_rev(underlying.ser_id);
+            let migration_id = underlying.ser_id.extract(target).await?;
             if V::can_migrate_from(&migration_id, underlying.ser_ver) {
                 let val = V::do_migration(&migration_id, underlying.ser_ver, underlying.value)?;
                 *lock = Some(val);
             } else {
                 panic!("Cannot migrate from {}:{} -> {}:{}",
-                       migration_id, underlying.ser_id, V::ID, V::SCHEMA_VERSION);
+                       migration_id, underlying.ser_ver, V::ID, V::SCHEMA_VERSION);
             }
         }
         Ok(())

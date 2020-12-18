@@ -103,7 +103,7 @@ impl InitConnectionTypesEvent {
         Ok(())
     }
 }
-self_event!(InitConnectionTypesEvent);
+failable_self_event!(InitConnectionTypesEvent, Error);
 
 #[derive(Module)]
 #[service]
@@ -117,6 +117,10 @@ pub struct ConnectionManager {
 impl ConnectionManager {
     #[event_handler]
     async fn init(&self, target: &Handler<impl Events>, _: &InitEvent) -> Result<()> {
+        let types = target.dispatch_sync(InitConnectionTypesEvent {
+            types: Default::default(),
+        })?.types;
+        self.types.store(Some(Arc::new(types)));
         self.update(target).await
     }
 

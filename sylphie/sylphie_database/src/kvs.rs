@@ -44,23 +44,23 @@ struct KvsTarget {
 }
 struct KvsMetadata {
     table_name: String,
-    key_id: u64,
+    key_id: StringId,
     key_version: u32,
     is_used: bool,
 }
 
-struct InitKvsEvent<'a> {
+struct InitKvsEvent {
     found_modules: HashSet<String>,
     used_table_names: HashSet<String>,
 
-    module_metadata: &'a mut HashMap<KvsTarget, KvsMetadata>,
-    conn: &'a mut DbSyncConnection,
+    module_metadata: HashMap<KvsTarget, KvsMetadata>,
+    conn: DbConnection,
 }
-failable_event!(['a] InitKvsEvent<'a>, (), Error);
-impl <'a> InitKvsEvent<'a> {
-    fn init_module(
-        &mut self, target: &Handler<impl Events>,
-        key_id: &'static str, key_version: u32, module: &ModuleInfo, is_transient: bool,
+failable_self_event!(InitKvsEvent, Error);
+impl InitKvsEvent {
+    async fn init_module<'a>(
+        &'a mut self, target: &'a Handler<impl Events>,
+        key_id: &'static str, key_version: u32, module: &'a ModuleInfo, is_transient: bool,
     ) -> Result<()> {
         let interner = target.get_service::<Interner>().lock();
 
@@ -77,7 +77,8 @@ impl <'a> InitKvsEvent<'a> {
         }) {
             existing_metadata.is_used = true;
 
-            let exist_name = interner.get_ser_id_rev(existing_metadata.key_id);
+            let exist_name =
+                interner.get_str_id_rev(&mut self.conn, existing_metadata.key_id).await?;
             let key_id_matches = key_id == &*exist_name;
             let key_version_matches = key_version == existing_metadata.key_version;
 
@@ -93,7 +94,7 @@ impl <'a> InitKvsEvent<'a> {
             self.create_kvs_table(
                 &interner, module.name().to_string(), table_name,
                 key_id, key_version, is_transient,
-            )?;
+            ).await?;
         }
 
         Ok(())
@@ -138,13 +139,14 @@ impl <'a> InitKvsEvent<'a> {
         }
     }
 
-    fn create_kvs_table(
-        &mut self, interner: &InternerLock, module_path: String, table_name: String,
+    async fn create_kvs_table<'a>(
+        &'a mut self, interner: &'a InternerLock, module_path: String, table_name: String,
         key_id: &'static str, key_version: u32, is_transient: bool,
     ) -> Result<()> {
         debug!("Creating table for KVS store '{}'...", table_name);
 
-        let mut transaction = self.conn.transaction_with_type(TransactionType::Exclusive)?;
+        let str_id = interner.get_str_id(&mut self.conn, key_id).await?;
+        let mut transaction = self.conn.transaction_with_type(TransactionType::Exclusive).await?;
         let target_transient = if is_transient { "transient." } else { "" };
         transaction.execute_batch(format!(
             "CREATE TABLE {}{} (\
@@ -154,7 +156,7 @@ impl <'a> InitKvsEvent<'a> {
                 value_schema_ver INTEGER NOT NULL \
             )",
             target_transient, table_name,
-        ))?;
+        )).await?;
         transaction.execute(
             format!(
                 "INSERT INTO {}sylphie_db_kvs_info \
@@ -163,18 +165,18 @@ impl <'a> InitKvsEvent<'a> {
                 target_transient,
             ),
             (
-                module_path.clone(), table_name.clone(), 0,
-                interner.get_ser_id(key_id), key_version,
+                module_path.clone(), table_name.clone(), 0u32,
+                str_id, key_version,
             ),
-        )?;
-        transaction.commit()?;
+        ).await?;
+        transaction.commit().await?;
 
         self.used_table_names.insert(table_name.to_string());
         self.module_metadata.insert(
             KvsTarget { module_path, is_transient },
             KvsMetadata {
                 table_name,
-                key_id: interner.get_ser_id(key_id),
+                key_id: interner.get_str_id(&mut self.conn, key_id).await?,
                 key_version,
                 is_used: true,
             },
@@ -182,17 +184,17 @@ impl <'a> InitKvsEvent<'a> {
         Ok(())
     }
 
-    fn load_kvs_metadata(&mut self, is_transient: bool) -> Result<()> {
-        let values: Vec<(String, String, u32, u64, u32)> = self.conn.query_vec_nullary(
+    async fn load_kvs_metadata(&mut self, is_transient: bool) -> Result<()> {
+        let values: Vec<(String, String, u32, StringId, u32)> = self.conn.query_vec_nullary(
             format!(
                 "SELECT module_path, table_name, kvs_schema_version, key_id, key_version \
                  FROM {}sylphie_db_kvs_info",
                 if is_transient { "transient." } else { "" },
             ),
-        )?;
+        ).await?;
         for (module_path, table_name, schema_version, key_id, key_version) in values {
             assert_eq!(
-                schema_version, 0,
+                schema_version, 0u32,
                 "This database was created with a future version of Sylphie.",
             );
             self.used_table_names.insert(table_name.clone());
@@ -208,7 +210,7 @@ impl <'a> InitKvsEvent<'a> {
 struct InitKvsLate {
     module_metadata: HashMap<KvsTarget, KvsMetadata>,
 }
-simple_event!(InitKvsLate);
+failable_event!(InitKvsLate, (), Error);
 
 static PERSISTENT_KVS_MIGRATIONS: MigrationData = MigrationData {
     migration_id: "kvs persistent ebc80f22-f8e8-4c0f-b09c-6fd12e3c853b",
@@ -228,26 +230,28 @@ static TRANSIENT_KVS_MIGRATIONS: MigrationData = MigrationData {
         migration_script!(0, 1, "sql/kvs_transient_0_to_1.sql"),
     ],
 };
-pub(crate) fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
-    PERSISTENT_KVS_MIGRATIONS.execute_sync(target)?;
-    TRANSIENT_KVS_MIGRATIONS.execute_sync(target)?;
+pub(crate) async fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
+    PERSISTENT_KVS_MIGRATIONS.execute(target).await?;
+    TRANSIENT_KVS_MIGRATIONS.execute(target).await?;
 
     // initialize the state for init KVS
-    let mut conn = target.connect_db_sync()?;
-    let mut module_metadata = HashMap::new();
     let mut event = InitKvsEvent {
         found_modules: Default::default(),
         used_table_names: Default::default(),
-        module_metadata: &mut module_metadata,
-        conn: &mut conn,
+        module_metadata: HashMap::new(),
+        conn: target.connect_db().await?,
     };
 
     // load kvs metadata
-    event.load_kvs_metadata(false)?;
-    event.load_kvs_metadata(true)?;
+    event.load_kvs_metadata(false).await?;
+    event.load_kvs_metadata(true).await?;
 
     // check that everything is OK, and create tables/etc
-    target.dispatch_sync(event)?;
+    let event = target.dispatch_async(event).await?;
+
+    // unpack event
+    let module_metadata = event.module_metadata;
+    let mut conn = event.conn;
 
     // drop unused transient tables
     for (key, metadata) in &module_metadata {
@@ -256,7 +260,7 @@ pub(crate) fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
                 "DROP TABLE {}{}",
                 if key.is_transient { "transient." } else { "" },
                 metadata.table_name,
-            ))?;
+            )).await?;
         }
     }
 
@@ -264,7 +268,7 @@ pub(crate) fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
     std::mem::drop(conn);
 
     // initialize the actual kvs stores' internal state
-    target.dispatch_sync(InitKvsLate { module_metadata });
+    target.dispatch_async(InitKvsLate { module_metadata }).await?;
 
     Ok(())
 }
@@ -272,21 +276,21 @@ pub(crate) fn init_kvs(target: &Handler<impl Events>) -> Result<()> {
 struct BaseKvsStoreInfo {
     db: Database,
     interner: InternerLock,
-    value_id: u64,
+    value_id: StringId,
     queries: KvsStoreQueries,
 }
 impl BaseKvsStoreInfo {
-    fn new(
-        target: &Handler<impl Events>,
-        module: &str, is_transient: bool, late: &InitKvsLate, value_id: &'static str,
-    ) -> Self {
+    async fn new<'a>(
+        target: &'a Handler<impl Events>,
+        module: &'a str, is_transient: bool, late: &'a InitKvsLate, value_id: &'static str,
+    ) -> Result<Self> {
         let metadata = late.module_metadata.get(&KvsTarget {
             module_path: module.to_string(),
             is_transient,
         }).unwrap();
         let interner = target.get_service::<Interner>().lock();
-        let value_id = interner.get_ser_id(value_id);
-        BaseKvsStoreInfo {
+        let value_id = StringId::intern(target, value_id).await?;
+        Ok(BaseKvsStoreInfo {
             db: target.get_service::<Database>().clone(),
             interner,
             value_id,
@@ -295,7 +299,7 @@ impl BaseKvsStoreInfo {
                 if is_transient { "transient." } else { "" },
                 metadata.table_name,
             )),
-        }
+        })
     }
 }
 
@@ -321,7 +325,7 @@ impl KvsStoreQueries {
     }
 
     async fn store_value<K: DbSerializable, V: DbSerializable>(
-        &self, conn: &mut DbConnection, key: &K, value: &V, value_schema_id: u64,
+        &self, conn: &mut DbConnection, key: &K, value: &V, value_schema_id: StringId,
     ) -> Result<()> {
         conn.execute(
             self.store_query.clone(),
@@ -344,26 +348,27 @@ impl KvsStoreQueries {
     }
     async fn load_value<'a, K: DbSerializable, V: DbSerializable>(
         &'a self, conn: &'a mut DbConnection, key: &K, store_info: &'a BaseKvsStoreInfo,
-        is_migration_mandatory: bool,
+        value_schema_id: StringId, is_migration_mandatory: bool,
     ) -> Result<Option<V>> {
-        let result: Option<(SerializeValue, u64, u32)> = conn.query_row(
+        let result: Option<(SerializeValue, StringId, u32)> = conn.query_row(
             self.load_query.clone(),
             K::Format::serialize(key)?,
         ).await?;
         if let Some((value, schema_id, schema_ver)) = result {
-            let schema_name = store_info.interner.get_ser_id_rev(schema_id);
-            if V::ID == &*schema_name && V::SCHEMA_VERSION == schema_ver {
+            if schema_id == value_schema_id && V::SCHEMA_VERSION == schema_ver {
                 Ok(Some(V::Format::deserialize(value)?))
-            } else if V::can_migrate_from(&schema_name, schema_ver) {
-                Ok(Some(V::do_migration(&schema_name, schema_ver, value)?))
-            } else if !is_migration_mandatory {
-                Ok(None)
             } else {
-                bail!(
-                    "Could not migrate value to current schema version! \
-                     (old: {} v{}, new: {} v{})",
-                    schema_name, schema_id, V::ID, V::SCHEMA_VERSION,
-                );
+                let schema_name = store_info.interner.get_str_id_rev(conn, schema_id).await?;
+                if V::can_migrate_from(&schema_name, schema_ver) {
+                    Ok(Some(V::do_migration(&schema_name, schema_ver, value)?))
+                } else if !is_migration_mandatory {
+                    Ok(None)
+                } else {
+                    bail!(
+                        "Could not migrate value to current schema version! ({}:{} -> {}:{})",
+                        schema_name, schema_ver, V::ID, V::SCHEMA_VERSION,
+                    );
+                }
             }
         } else {
             Ok(None)
@@ -390,25 +395,19 @@ pub struct BaseKvsStore<K: DbSerializable + Hash + Eq, V: DbSerializable, T: Kvs
 #[module_impl]
 impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore<K, V, T> {
     #[event_handler]
-    fn init_interner<'a>(&self, ev: &mut InitInterner<'a>) -> Result<()> {
-        ev.intern_id(K::ID)?;
-        ev.intern_id(V::ID)?;
-        Ok(())
-    }
-
-    #[event_handler]
-    fn init_kvs<'a>(
-        &self, target: &Handler<impl Events>, ev: &mut InitKvsEvent<'a>,
+    async fn init_kvs(
+        &self, target: &Handler<impl Events>, ev: &mut InitKvsEvent,
     ) -> Result<()> {
-        ev.init_module(target, K::ID, K::SCHEMA_VERSION, &self.info, T::IS_TRANSIENT)?;
+        ev.init_module(target, K::ID, K::SCHEMA_VERSION, &self.info, T::IS_TRANSIENT).await?;
         Ok(())
     }
 
     #[event_handler]
-    fn init_kvs_late(&self, target: &Handler<impl Events>, ev: &InitKvsLate) {
+    async fn init_kvs_late(&self, target: &Handler<impl Events>, ev: &InitKvsLate) -> Result<()> {
         self.data.store(Some(Arc::new(BaseKvsStoreInfo::new(
             target, self.info.name(), T::IS_TRANSIENT, ev, V::ID,
-        ))));
+        ).await?)));
+        Ok(())
     }
 
     fn load_data(&self) -> Arc<BaseKvsStoreInfo> {
@@ -420,7 +419,7 @@ impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore
 
     async fn get_db(&self, data: &BaseKvsStoreInfo, k: K) -> Result<Option<V>> {
         data.queries.load_value(
-            &mut self.connect_db(&data).await?, &k, &data, !T::IS_TRANSIENT,
+            &mut self.connect_db(&data).await?, &k, &data, data.value_id, !T::IS_TRANSIENT,
         ).await
     }
     async fn get_0(&self, data: &BaseKvsStoreInfo, k: K) -> Result<Option<V>> {

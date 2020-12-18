@@ -18,6 +18,7 @@ fxhash = "0.2.1"
 parking_lot = "0.11.0"
 rusqlite = "0.24.0"
 serde = { version = "1.0.114", features = ["derive", "rc"] }
+serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
 serde_rusqlite = "0.26.0"
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }

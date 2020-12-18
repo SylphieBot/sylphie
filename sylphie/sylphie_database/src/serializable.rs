@@ -1,6 +1,8 @@
 use bincode::Options;
 use serde::*;
-use serde::de::{DeserializeOwned, Visitor, Error as DeError};
+use serde::de::{DeserializeOwned, Visitor, Error as DeError, SeqAccess};
+use serde::de::value::SeqAccessDeserializer;
+use serde_bytes::ByteBuf;
 use std::any::Any;
 use std::sync::Arc;
 use sylphie_core::prelude::*;
@@ -98,12 +100,25 @@ impl <'de> Visitor<'de> for SerializeValueVisitor {
         formatter.write_str("an sqlite serializable value")
     }
 
+    fn visit_none<E>(self) -> StdResult<Self::Value, E> where E: DeError {
+        Ok(SerializeValue::Null)
+    }
+    fn visit_unit<E>(self) -> StdResult<Self::Value, E> where E: DeError {
+        Ok(SerializeValue::Null)
+    }
 
     fn visit_i64<E>(self, v: i64) -> StdResult<Self::Value, E> where E: DeError {
         Ok(SerializeValue::Integer(v))
     }
     fn visit_u64<E>(self, v: u64) -> StdResult<Self::Value, E> where E: DeError {
         Ok(SerializeValue::Integer(v as i64))
+    }
+
+    fn visit_f32<E>(self, v: f32) -> StdResult<Self::Value, E> where E: DeError {
+        Ok(SerializeValue::Floating(v as f64))
+    }
+    fn visit_f64<E>(self, v: f64) -> StdResult<Self::Value, E> where E: DeError {
+        Ok(SerializeValue::Floating(v))
     }
 
     fn visit_str<E>(self, v: &str) -> StdResult<Self::Value, E> where E: DeError {
@@ -118,6 +133,10 @@ impl <'de> Visitor<'de> for SerializeValueVisitor {
     }
     fn visit_byte_buf<E>(self, v: Vec<u8>) -> StdResult<Self::Value, E> where E: DeError {
         Ok(SerializeValue::Bytes(v.into()))
+    }
+    fn visit_seq<A>(self, seq: A) -> StdResult<Self::Value, A::Error> where A: SeqAccess<'de> {
+        let buf = ByteBuf::deserialize(SeqAccessDeserializer::new(seq))?;
+        Ok(SerializeValue::Bytes(buf.into_vec().into()))
     }
 }
 

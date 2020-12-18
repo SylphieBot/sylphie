@@ -17,7 +17,6 @@ use sylphie_utils::cache::LruCache;
 use sylphie_utils::disambiguate::*;
 use sylphie_utils::locks::LockSet;
 use sylphie_utils::scopes::Scope;
-use tokio::runtime::Handle;
 
 mod impls;
 
@@ -30,10 +29,9 @@ static CONFIG_MIGRATIONS: MigrationData = MigrationData {
         migration_script!(0, 1, "config_0_to_1.sql"),
     ],
 };
-pub(crate) fn init_config(target: &Handler<impl Events>) -> Result<()> {
-    CONFIG_MIGRATIONS.execute_sync(target)?;
-    let handle = Handle::current();
-    handle.block_on(target.get_service::<ConfigManager>().reload(target))?;
+pub(crate) async fn init_config(target: &Handler<impl Events>) -> Result<()> {
+    CONFIG_MIGRATIONS.execute(target).await?;
+    target.get_service::<ConfigManager>().reload(target).await?;
     Ok(())
 }
 
@@ -329,13 +327,15 @@ impl ConfigManager {
         let scope = ScopeId::intern(target, scope).await?;
         let val = self.cache.cached_async((scope, key.0.id), async {
             let mut conn = target.connect_db().await?;
-            let res: Option<(Option<SerializeValue>, Option<u64>, Option<u32>)> = conn.query_row(
-                "SELECT val, val_schema_id, val_schema_version FROM sylphie_db_configuration \
-                 WHERE scope = ? AND key_id = ?;",
-                (scope, StringId::intern(target, key.0.storage_name).await?),
-            ).await?;
+            let res: Option<(Option<SerializeValue>, Option<StringId>, Option<u32>)> =
+                conn.query_row(
+                    "SELECT val, val_schema_id, val_schema_version FROM sylphie_db_configuration \
+                     WHERE scope = ? AND key_id = ?;",
+                    (scope, StringId::intern(target, key.0.storage_name).await?),
+                ).await?;
             if let Some((Some(data), Some(id), Some(version))) = res {
-                let id_name = target.get_service::<Interner>().lock().get_ser_id_rev(id);
+                let id_name =
+                    target.get_service::<Interner>().lock().get_str_id_rev(&mut conn, id).await?;
                 if &*id_name == T::ID && version == T::SCHEMA_VERSION {
                     Ok(Some(
                         Arc::new(T::Format::deserialize(data)?)
@@ -378,6 +378,8 @@ impl ConfigManager {
     ) -> Result<()> {
         let _guard = self.locks.lock((scope, id)).await;
         let mut conn = target.connect_db().await?;
+        let schema_id =
+            target.get_service::<Interner>().lock().get_str_id(&mut conn, schema_id).await?;
         conn.execute(
             "INSERT INTO sylphie_db_configuration \
              (scope, key_id, val, val_schema_id, val_schema_version) \
@@ -386,7 +388,7 @@ impl ConfigManager {
                 scope,
                 StringId::intern(target, storage).await?,
                 value,
-                target.get_service::<Interner>().lock().get_ser_id(schema_id),
+                schema_id,
                 schema_ver,
             ),
         ).await?;
