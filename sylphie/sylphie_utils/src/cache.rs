@@ -28,9 +28,13 @@ struct LruData<K: Eq + Hash + 'static, V: 'static> {
 }
 impl <K: Eq + Hash + 'static, V: 'static> LruData<K, V> {
     fn new(lines: usize) -> Self {
+        let mut cache_data = Vec::with_capacity(lines);
+        for _ in 0..lines {
+            cache_data.push(ArcSwapOption::empty());
+        }
         LruData {
             lru: plru::create(lines),
-            cache_data: vec![ArcSwapOption::empty(); lines],
+            cache_data,
             key_lookup: Default::default(),
             base_time: Instant::now(),
         }

@@ -2,6 +2,7 @@
 members = [
     "sylphie/sylphie",
     "sylphie/sylphie_commands",
+    "sylphie/sylphie_connections",
     "sylphie/sylphie_core",
     "sylphie/sylphie_database",
     "sylphie/sylphie_derive",
@@ -9,6 +10,7 @@ members = [
 
     # Modules
     "sylphie_mod_core",
+    "sylphie_mod_discord",
 
     # Misc
     "sylphie_test_bot",

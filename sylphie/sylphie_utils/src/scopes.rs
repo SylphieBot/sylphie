@@ -33,3 +33,12 @@ pub struct Scope {
     pub scope_type: StringWrapper,
     pub args: ScopeArgs,
 }
+impl Scope {
+    /// Creates a new scope.
+    pub fn new(scope_type: impl Into<StringWrapper>, args: ScopeArgs) -> Self {
+        Scope {
+            scope_type: scope_type.into(),
+            args,
+        }
+    }
+}

@@ -252,6 +252,24 @@ mod private {
             Ok(val.into_f64()?)
         }
     }
+
+    impl SerializationFormat<SerializeValue> for DirectFormats {
+        fn serialize(val: &SerializeValue) -> Result<SerializeValue> {
+            Ok(val.clone())
+        }
+        fn deserialize(val: SerializeValue) -> Result<SerializeValue> {
+            Ok(val)
+        }
+    }
+
+    impl SerializationFormat<()> for DirectFormats {
+        fn serialize(_: &()) -> Result<SerializeValue> {
+            Ok(SerializeValue::Null)
+        }
+        fn deserialize(_: SerializeValue) -> Result<()> {
+            Ok(())
+        }
+    }
 }
 
 macro_rules! basic_defs {
@@ -299,6 +317,49 @@ basic_defs! {
     // scope definitions
     Scope => "sylphie_utils::scopes::Scope",
     ScopeArgs => "sylphie_utils::scopes::ScopeArgs",
+
+    // misc
+    () => ("unit", private::DirectFormats),
+    SerializeValue => ("sylphie_utils::serializable::SerializeValue", private::DirectFormats),
+}
+
+mod private_option {
+    use super::*;
+    use std::marker::PhantomData;
+
+    enum Void { }
+    pub struct OptionFormat<T>(PhantomData<T>, Void);
+    impl <T: DbSerializable> SerializationFormat<Option<T>> for OptionFormat<T> {
+        fn serialize(val: &Option<T>) -> Result<SerializeValue> {
+            match val {
+                None => Ok(SerializeValue::Null),
+                Some(x) => T::Format::serialize(x),
+            }
+        }
+        fn deserialize(val: SerializeValue) -> Result<Option<T>> {
+            match val {
+                SerializeValue::Null => Ok(None),
+                val => Ok(Some(T::Format::deserialize(val)?))
+            }
+        }
+    }
+}
+
+impl <T: DbSerializable> DbSerializable for Option<T> {
+    type Format = private_option::OptionFormat<T>;
+    const ID: &'static str = T::ID;
+    const SCHEMA_VERSION: u32 = T::SCHEMA_VERSION;
+
+    fn can_migrate_from(from_id: &str, from_version: u32) -> bool {
+        T::can_migrate_from(from_id, from_version)
+    }
+
+    fn do_migration(from_id: &str, from_version: u32, data: SerializeValue) -> Result<Self> {
+        match data {
+            SerializeValue::Null => Ok(None),
+            data => Ok(Some(T::do_migration(from_id, from_version, data)?)),
+        }
+    }
 }
 
 /// A simple wrapper that implements [`DbSerializable`] over any compatible type.

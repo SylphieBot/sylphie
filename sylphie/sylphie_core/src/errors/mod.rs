@@ -1,5 +1,5 @@
 use backtrace::Backtrace;
-use minnie_errors::{Error as MinnieError};
+use static_events::prelude_async::*;
 use std::borrow::Cow;
 use std::error::{Error as StdError};
 use std::fmt;
@@ -26,10 +26,6 @@ pub enum ErrorKind {
     /// These errors are meant to be reported to the user and are not internal errors.
     #[error("Command error occurred: {0}")]
     CommandError(Cow<'static, str>),
-
-    /// An error occurred from Minnie.
-    #[error("Discord error occurred: {0}")]
-    MinnieError(MinnieError),
 
     /// A wrapped generic error.
     #[error("{0}")]
@@ -166,8 +162,6 @@ impl Error {
     pub fn backtrace(&self) -> Option<&Backtrace> {
         if let Some(x) = &self.0.backtrace {
             Some(x)
-        } else if let ErrorKind::MinnieError(e) = &self.0.kind {
-            e.backtrace()
         } else {
             None
         }
@@ -181,7 +175,6 @@ impl Error {
     /// Gets the source of this error.
     pub fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match &self.0.kind {
-            ErrorKind::MinnieError(e) => e.source(),
             ErrorKind::GenericError(f) => f.source(),
             _ => match &self.0.cause {
                 Some(x) => Some(&**x),
@@ -245,6 +238,20 @@ impl fmt::Display for ErrorWrapper {
 /// The result type used throughout the library.
 pub type Result<T> = StdResult<T, Error>;
 
+/// This event is triggered when the bot needs to see if an error is nonfatal and should be
+/// reported to the user instead of treated as due to an underlying bug.
+pub struct CheckNonfatalErrorEvent(pub Error);
+self_event!(CheckNonfatalErrorEvent);
+
+impl Error {
+    /// Checks if this event is nonfatal, due to user error or otherwise expected.
+    ///
+    /// If it is, the error will be downgraded to a command error for returning to the user.
+    pub fn check_nonfatal(self, target: &Handler<impl Events>) -> Self {
+        target.dispatch_sync(CheckNonfatalErrorEvent(self)).0
+    }
+}
+
 // Contains the internal traits used throughout this module.
 mod private {
     use super::*;
@@ -301,11 +308,6 @@ mod private {
     impl ToError for ErrorWrapper {
         fn into_sylphie_error(self) -> Error {
             self.0
-        }
-    }
-    impl ToError for MinnieError {
-        fn into_sylphie_error(self) -> Error {
-            Error::new(ErrorKind::MinnieError(self))
         }
     }
 

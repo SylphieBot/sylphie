@@ -1,5 +1,5 @@
 [package]
-name = "sylphie_commands"
+name = "sylphie_connections"
 version = "0.1.0"
 authors = ["Lymia Aluysia <lymia@lymiahugs.com>"]
 edition = "2018"
@@ -9,12 +9,11 @@ edition = "2018"
 [dependencies]
 arc-swap = "1.0"
 async-trait = "0.1.36"
-derive_setters = "0.1.4"
-enumset = "1.0.0"
-futures = "0.3.0"
 fxhash = "0.2.1"
+serde = { version = "1.0.114", features = ["derive", "rc"] }
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }
-tracing = { version = "0.1.10", features = ["log"] }
+tokio = { version = "0.2.21", features = ["full"] }
 
 sylphie_core = { version = "0.1.0", path = "../sylphie_core" }
+sylphie_database = { version = "0.1.0", path = "../sylphie_database" }
 sylphie_utils = { version = "0.1.0", path = "../sylphie_utils" }

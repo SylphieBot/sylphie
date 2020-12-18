@@ -71,11 +71,11 @@ fn get_root_path() -> PathBuf {
 ///
 /// This event is dispatched synchronously.
 pub struct EarlyInitEvent(());
-simple_event!(EarlyInitEvent);
+failable_event!(EarlyInitEvent, (), Error);
 
 /// Dispatched when the bot is started, before user interface is initialized.
 pub struct InitEvent(());
-simple_event!(InitEvent);
+failable_event!(InitEvent, (), Error);
 
 /// Dispatched after shutdown is initialized, and after the user interface is killed.
 pub struct ShutdownEvent(());
@@ -193,8 +193,8 @@ impl <R: Module> SylphieCore<R> {
             });
 
             // start the actual bot itself
-            handler.dispatch_sync(EarlyInitEvent(()));
-            runtime.block_on(handler.dispatch_async(InitEvent(())));
+            handler.dispatch_sync(EarlyInitEvent(()))?;
+            runtime.block_on(handler.dispatch_async(InitEvent(())))?;
             interface.start(&handler)?;
             runtime.block_on(handler.dispatch_async(ShutdownEvent(())));
 

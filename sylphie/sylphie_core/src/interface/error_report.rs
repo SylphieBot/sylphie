@@ -18,6 +18,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+// TODO: Add some kinda hook for reporting error location correctly for stuff like Minnie errors
+//       where further backtraces/etc are available.
+
 // the type from parking_lot is a Voldemort type
 // this mainly exists so we can have an owned version
 struct DeadlockInfo {

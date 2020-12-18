@@ -442,14 +442,14 @@ impl <K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> BaseKvsStore
         let data = self.load_data();
         let value = self.get_0(&data, k.clone()).await?;
         Ok(KvsMutGuard {
-            parent: self,
+            kvs_parent: self,
             _guard: guard,
-            key: k,
-            value: match value {
+            ul_key: k,
+            ul_value: match value {
                 Some(v) => v,
                 None => make_default()?,
             },
-            data,
+            ul_data: data,
         })
     }
 
@@ -546,21 +546,21 @@ pub type TransientKvsStore<K, V> = BaseKvsStore<K, V, TransientKvsType>;
 
 /// A guard for mutating values in the KVS as a mutable object.
 pub struct KvsMutGuard<'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> {
-    parent: &'a BaseKvsStore<K, V, T>,
+    kvs_parent: &'a BaseKvsStore<K, V, T>,
     _guard: LockSetGuard<'a, K>,
-    key: K,
-    value: V,
-    data: Arc<BaseKvsStoreInfo>,
+    ul_key: K,
+    ul_value: V,
+    ul_data: Arc<BaseKvsStoreInfo>,
 }
 impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType> KvsMutGuard<'a, K, V, T> {
     /// Commit the changed KVS value to the database.
     pub async fn commit(self) -> Result<()> {
-        self.parent.set_0(&self.data, self.key, self.value).await
+        self.kvs_parent.set_0(&self.ul_data, self.ul_key, self.ul_value).await
     }
 
     /// Deletes the KVS value from the database.
     pub async fn remove(self) -> Result<()> {
-        self.parent.remove_0(&self.data, self.key).await
+        self.kvs_parent.remove_0(&self.ul_data, self.ul_key).await
     }
 }
 impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType>
@@ -568,13 +568,13 @@ impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType>
 {
     type Target = V;
     fn deref(&self) -> &Self::Target {
-        &self.value
+        &self.ul_value
     }
 }
 impl <'a, K: DbSerializable + Hash + Eq, V: DbSerializable, T: KvsType>
     DerefMut for KvsMutGuard<'a, K, V, T>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value
+        &mut self.ul_value
     }
 }

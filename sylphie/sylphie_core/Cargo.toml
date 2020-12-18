@@ -7,7 +7,7 @@ edition = "2018"
 [features]
 
 [dependencies]
-arc-swap = "0.4.6"
+arc-swap = "1.0"
 backtrace = "0.3.48"
 chrono = "0.4.11"
 enumset = "1.0.0"
@@ -15,7 +15,6 @@ fs2 = "0.4.3"
 futures = "0.3.0"
 lazy_static = "1.4.0"
 linefeed = "0.6.0"
-minnie_errors = { version = "0.1.0", git = "https://github.com/SylphieBot/minnie.git" }
 parking_lot = { version = "0.11.0", features = ["deadlock_detection"] }
 serde = { version = "1.0", features = ["derive"] }
 static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-events.git" }

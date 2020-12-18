@@ -48,7 +48,7 @@ impl <T: Sync + Send + 'static> GlobalInstance<T> {
 
 /// A guard for [`GlobalInstance::set_instance`].
 pub struct InstanceGuard<T: Sync + Send + 'static> {
-    inner_guard: ArcSwapGuard<'static, Option<Arc<T>>>,
+    inner_guard: ArcSwapGuard<Option<Arc<T>>>,
 }
 impl <T: Sync + Send + 'static> InstanceGuard<T> {
     /// Returns whether an instance is actually loaded.

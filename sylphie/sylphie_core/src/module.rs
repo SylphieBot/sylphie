@@ -119,7 +119,21 @@ pub trait Module: Events + Sized + Send + Sync + 'static {
     fn info(&self) -> &ModuleInfo;
     fn info_mut(&mut self) -> &mut ModuleInfo;
 
-    fn init_module(parent: &str, walker: &mut ModuleTreeWalker) -> Self;
+    fn init_module(parent: &str, walker: &mut ModuleTreeWalker<'_>) -> Self;
+}
+impl <T: Module> Module for Arc<T> {
+    fn metadata(&self) -> ModuleMetadata {
+        (**self).metadata()
+    }
+    fn info(&self) -> &ModuleInfo {
+        (**self).info()
+    }
+    fn info_mut(&mut self) -> &mut ModuleInfo {
+        Arc::get_mut(self).unwrap().info_mut()
+    }
+    fn init_module(parent: &str, walker: &mut ModuleTreeWalker<'_>) -> Self {
+        Arc::new(T::init_module(parent, walker))
+    }
 }
 
 #[derive(Debug)]

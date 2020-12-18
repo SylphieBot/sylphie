@@ -49,6 +49,8 @@ pub enum ConfigFlag {
     /// A server is something like a Discord guild or an IRC channel that can be expected to be
     /// managed by a single moderation team.
     Server,
+    /// This configuration option can be set in a category scope.
+    Category,
     /// This configuration option can be set in a channel scope.
     ///
     /// Note that on platforms like IRC, a channel and a server are the same thing.
@@ -198,6 +200,7 @@ impl <'a, T: ConfigType> fmt::Display for DisplayConfigType<'a, T> {
 /// A dynamically loaded configuration key used for configuration purposes.
 pub struct RegisteredConfig {
     entry_names: Vec<EntryName>,
+    id: TypeId,
     db_id: StringId,
     dyn_config: Box<dyn DynConfigType>,
 }
@@ -214,6 +217,16 @@ impl RegisteredConfig {
     }
     pub async fn remove(&self, target: &Handler<impl Events>, scope: Scope) -> Result<()> {
         self.dyn_config.remove(target, scope).await
+    }
+}
+impl <T: ConfigType> PartialEq<ConfigKey<T>> for RegisteredConfig {
+    fn eq(&self, other: &ConfigKey<T>) -> bool {
+        self.id == other.0.id
+    }
+}
+impl <T: ConfigType> PartialEq<RegisteredConfig> for ConfigKey<T> {
+    fn eq(&self, other: &RegisteredConfig) -> bool {
+        self.0.id == other.id
     }
 }
 
@@ -264,6 +277,7 @@ impl RegisterConfigEvent {
         } else {
             self.configs.insert(key.0.id, RegisteredConfig {
                 entry_names: vec![entry_name],
+                id: key.0.id,
                 db_id,
                 dyn_config: Box::new(DynConfigKey::new(target, *key)),
             });
@@ -272,6 +286,12 @@ impl RegisterConfigEvent {
         Ok(())
     }
 }
+
+pub struct ConfigurationChangedEvent {
+    pub scope: Scope,
+    pub config_key: RegisteredConfig,
+}
+failable_event!(ConfigurationChangedEvent, (), Error);
 
 struct ConfigManagerData {
     disambiguate: DisambiguatedSet<Arc<RegisteredConfig>>,

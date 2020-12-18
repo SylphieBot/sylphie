@@ -14,6 +14,7 @@ static-events = { version = "0.2.0", git = "https://github.com/Lymia/static-even
 tracing = { version = "0.1.10", features = ["log"] }
 
 sylphie_commands = { version = "0.1.0", path = "../sylphie_commands" }
+sylphie_connections = { version = "0.1.0", path = "../sylphie_connections" }
 sylphie_core = { version = "0.1.0", path = "../sylphie_core" }
 sylphie_database = { version = "0.1.0", path = "../sylphie_database" }
 sylphie_derive = { version = "0.1.0", path = "../sylphie_derive" }

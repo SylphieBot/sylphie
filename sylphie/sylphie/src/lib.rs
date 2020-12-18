@@ -7,14 +7,21 @@
 #[doc(inline)] pub use sylphie_core::timer;
 #[doc(inline)] pub use sylphie_core::module;
 
-/// A module containing the implementaiton of Sylphie's commands system.
+/// A module containing the command system.
 pub mod commands {
     #[doc(inline)] pub use sylphie_commands::{commands, ctx, manager};
 }
 
-/// A module containing the implementation of Sylphie's database system.
+/// A module containing types used for storing data persistantly.
 pub mod database {
-    #[doc(inline)] pub use sylphie_database::{connection, config, kvs, migrations, serializable};
+    #[doc(inline)] pub use sylphie_database::{
+        connection, config, kvs, migrations, serializable, singleton,
+    };
+}
+
+/// A module containing types used for managing connections.
+pub mod connections {
+    #[doc(inline)] pub use sylphie_connections::{*, ConnectionManager as _};
 }
 
 /// A module containing various types useful for the construction of Sylphie bots.
@@ -74,9 +81,10 @@ pub mod __macro_export {
         info: crate::module::ModuleInfo,
         #[submodule]
         commands: sylphie_commands::CommandsModule<M>,
-        #[subhandler]
-        #[init_with { sylphie_database::DatabaseModule::new() }]
+        #[submodule]
         database: sylphie_database::DatabaseModule,
+        #[submodule]
+        connections: sylphie_connections::ConnectionManager,
     }
 }
 

@@ -1,7 +1,7 @@
 #![feature(specialization)]
 #![deny(unused_must_use)]
 
-// TODO: Remove the minnie_errors dependency and add a mechanism to hook error reports.
+// TODO: Separation of concerns: Less cmd_error in the core? Or should I18N codes be enough...
 
 #[macro_use] extern crate tracing;
 pub mod errors; // this goes before to make sure macros resolve

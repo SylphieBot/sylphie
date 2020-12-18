@@ -9,6 +9,7 @@ mod interner;
 pub mod connection;
 pub mod kvs;
 pub mod serializable;
+pub mod singleton;
 
 /// Contains misc types that involve the database.
 ///
@@ -22,26 +23,23 @@ use sylphie_core::core::{EarlyInitEvent, BotInfo};
 use sylphie_core::derives::*;
 use sylphie_core::interface::SetupLoggerEvent;
 use sylphie_core::prelude::*;
+use tokio::runtime::Handle;
 
 /// The event called to initialize the database.
 pub struct InitDbEvent(());
 failable_event!(InitDbEvent, (), Error);
 
-/// The module that handles database connections and migrations.
-///
-/// This should be a part of the module tree for database connections and migrations to work
-/// correctly.
 #[derive(Events)]
-pub struct DatabaseModule {
+struct InnerHandler {
     #[service] #[subhandler] config: config::ConfigManager,
     #[service] interner: interner::Interner,
     #[service] database: connection::Database,
     #[service] migrations: migrations::MigrationManager,
 }
-impl DatabaseModule {
-    pub fn new() -> Self {
+impl InnerHandler {
+    fn new() -> Self {
         let database = connection::Database::new();
-        DatabaseModule {
+        InnerHandler {
             config: Default::default(),
             interner: Default::default(),
             database: database.clone(),
@@ -49,18 +47,40 @@ impl DatabaseModule {
         }
     }
 }
-#[events_impl]
+
+/// The module that handles database connections and migrations.
+///
+/// This should be a part of the module tree for database connections and migrations to work
+/// correctly.
+#[derive(Module)]
+pub struct DatabaseModule {
+    #[module_info] info: ModuleInfo,
+    #[subhandler] #[init_with { InnerHandler::new() }] inner: InnerHandler,
+    #[submodule] #[service] store: singleton::SingletonDataStore,
+}
+#[module_impl]
 impl DatabaseModule {
     #[event_handler(EvInit)]
-    fn init_database(target: &Handler<impl Events>, _: &EarlyInitEvent) {
-        if let Err(e) = target.dispatch_sync(InitDbEvent(())) {
+    fn init_database(&self, target: &Handler<impl Events>, _: &EarlyInitEvent) {
+        if let Err(e) = self.early_init_db(target) {
             e.report_error();
             panic!("Error occurred during early database initialization.");
         }
+
+        let handle = Handle::current();
+        if let Err(e) = handle.block_on(target.dispatch_async(InitDbEvent(()))) {
+            e.report_error();
+            panic!("Error occurred during database initialization.");
+        }
     }
 
-    #[event_handler(EvInit)]
-    fn init_db_paths(&self, target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
+    fn early_init_db(&self, target: &Handler<impl Events>) -> Result<()> {
+        self.init_db_paths(target)?;
+        self.init_serializers(target)?;
+        Ok(())
+    }
+
+    fn init_db_paths(&self, target: &Handler<impl Events>) -> Result<()> {
         let info = target.get_service::<BotInfo>();
 
         let mut db_path = info.root_path().to_owned();
@@ -73,12 +93,11 @@ impl DatabaseModule {
         let mut transient_path = db_path.to_owned();
         transient_path.push(format!("{}.transient.db", info.bot_name()));
 
-        self.database.set_paths(persistent_path, transient_path);
+        self.inner.database.set_paths(persistent_path, transient_path);
         Ok(())
     }
 
-    #[event_handler]
-    fn init_serializers(target: &Handler<impl Events>, _: &InitDbEvent) -> Result<()> {
+    fn init_serializers(&self, target: &Handler<impl Events>) -> Result<()> {
         crate::interner::init_interner(target)?;
         crate::kvs::init_kvs(target)?;
         crate::config::init_config(target)?;

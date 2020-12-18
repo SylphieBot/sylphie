@@ -175,9 +175,9 @@ impl InternerLock {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Interner {
-    data: ArcSwapOption<InternerData>,
+    data: Arc<ArcSwapOption<InternerData>>,
 }
 impl Interner {
     pub fn lock(&self) -> InternerLock {
